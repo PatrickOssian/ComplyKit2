@@ -1,0 +1,5 @@
+NEXTJS_ENV=development
+
+# Uncomment and fill in once Neon Postgres + real auth are wired up:
+# DATABASE_URL="postgres://..."
+# AUTH_SECRET="..."

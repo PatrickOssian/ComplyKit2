@@ -1,26 +1,101 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ck-ink: #101828;
+  --ck-page: #f6f7f9;
+  --ck-rail: #101828;
+  --ck-rail-2: #1d2739;
+  --ck-rail-3: #252f44;
+  --ck-rail-4: #2a3548;
+  --ck-border: #eaecf0;
+  --ck-border-2: #d0d5dd;
+  --ck-muted: #98a2b3;
+  --ck-muted-2: #667085;
+  --ck-text-2: #475467;
+  --ck-text-3: #344054;
+  --ck-accent: #12b76a;
+  --ck-accent-ink: #06281a;
+  --ck-accent-bg: #ecfdf3;
+  --ck-accent-border: #abefc6;
+  --ck-indigo: #3538cd;
+  --ck-indigo-bg: #eef1fe;
+  --ck-indigo-border: #d8dffb;
+  --ck-violet: #7a5af8;
+  --ck-violet-2: #6941c6;
+  --ck-violet-bg: #f5f3ff;
+  --ck-violet-border: #e5defb;
+  --ck-amber: #f79009;
+  --ck-amber-bg: #fff8ec;
+  --ck-amber-border: #fce4b8;
+  --ck-red: #b42318;
+  --ck-red-bg: #fef3f2;
+  --ck-red-border: #fecdca;
+  --ck-blue: #2e90fa;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-ck-ink: var(--ck-ink);
+  --color-ck-page: var(--ck-page);
+  --color-ck-rail: var(--ck-rail);
+  --color-ck-rail-2: var(--ck-rail-2);
+  --color-ck-rail-3: var(--ck-rail-3);
+  --color-ck-rail-4: var(--ck-rail-4);
+  --color-ck-border: var(--ck-border);
+  --color-ck-border-2: var(--ck-border-2);
+  --color-ck-muted: var(--ck-muted);
+  --color-ck-muted-2: var(--ck-muted-2);
+  --color-ck-text-2: var(--ck-text-2);
+  --color-ck-text-3: var(--ck-text-3);
+  --color-ck-accent: var(--ck-accent);
+  --color-ck-accent-ink: var(--ck-accent-ink);
+  --color-ck-accent-bg: var(--ck-accent-bg);
+  --color-ck-accent-border: var(--ck-accent-border);
+  --color-ck-indigo: var(--ck-indigo);
+  --color-ck-indigo-bg: var(--ck-indigo-bg);
+  --color-ck-indigo-border: var(--ck-indigo-border);
+  --color-ck-violet: var(--ck-violet);
+  --color-ck-violet-2: var(--ck-violet-2);
+  --color-ck-violet-bg: var(--ck-violet-bg);
+  --color-ck-violet-border: var(--ck-violet-border);
+  --color-ck-amber: var(--ck-amber);
+  --color-ck-amber-bg: var(--ck-amber-bg);
+  --color-ck-amber-border: var(--ck-amber-border);
+  --color-ck-red: var(--ck-red);
+  --color-ck-red-bg: var(--ck-red-bg);
+  --color-ck-red-border: var(--ck-red-border);
+  --color-ck-blue: var(--ck-blue);
+  --font-mono-ck: var(--font-ibm-plex-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  margin: 0;
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--ck-page);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: var(--ck-ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ck-border-2);
+  border-radius: 10px;
+  border: 3px solid var(--ck-page);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
