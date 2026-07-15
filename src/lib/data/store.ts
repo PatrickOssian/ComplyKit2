@@ -1,10 +1,14 @@
-// In-memory mock data store, one bucket per tenant, lazily cloned from the
-// seed data on first access. This resets on dev-server restart / cold
-// Worker start — acceptable for this mock-data phase. When Neon is wired
-// in later, only the internals of this module change (per-request
-// postgres/@neondatabase/serverless client); call sites in Server Actions
-// stay the same.
+// Neon Postgres-backed data store, one tenant per set of rows scoped by
+// tenant_id. Replaces the earlier in-memory Map-based mock — every
+// exported function keeps its original name/signature (now async) so
+// callers in actions.ts and app-context.ts only needed `await` added,
+// not a rewrite. Uses the stateless Neon HTTP driver (getDb() creates a
+// fresh client per call) rather than a module-level singleton, per the
+// Cloudflare Workers "no global DB client" constraint.
 
+import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { getDb } from "../db/client";
+import * as schema from "../db/schema";
 import type {
   Activity,
   ActivityStatus,
@@ -24,20 +28,6 @@ import type {
   SignedRecord,
   Tenant,
 } from "./types";
-import {
-  activities as seedActivities,
-  auditLog as seedAuditLog,
-  documents as seedDocuments,
-  invoices as seedInvoices,
-  members as seedMembers,
-  pendingSignatures as seedPendingSignatures,
-  policyMeta as seedPolicyMeta,
-  policySections as seedPolicySections,
-  procedureDrafts,
-  recurringControls as seedRecurringControls,
-  signedRecords as seedSignedRecords,
-  tenants,
-} from "./seed";
 import { auditStamp, bumpVersion, formatDkDate, formatDkDateTime, nextDueFromCadence, rndHash } from "../domain";
 
 export interface PolicySignature {
@@ -68,11 +58,14 @@ export interface TenantBucket {
   activities: Activity[];
   documents: ControlledDocument[];
   policySections: PolicySection[];
-  /** User-added custom policy sections (beyond the 28 seed sections). */
+  /** Kept for shape compatibility with callers — sections are now stored
+   * as real rows (with their own `custom` flag) in `policySections`
+   * directly, so this is always empty. */
   policyCustomSections: PolicySection[];
-  /** Draft body-text overrides per section num, split on blank lines like the seed body[] arrays. */
+  /** Kept for shape compatibility — edits are written straight to the
+   * section row now, so lookups against this always miss and callers
+   * fall back to the (already current) section body/title. */
   policyEdits: Record<number, string>;
-  /** Title overrides for built-in (non-custom) policy sections. */
   policyTitleEdits: Record<number, string>;
   policyState: PolicyState;
   recurringControls: RecurringControl[];
@@ -81,232 +74,403 @@ export interface TenantBucket {
   auditLog: AuditEvent[];
   pendingSignatures: PendingSignature[];
   signedRecords: SignedRecord[];
-  /** Manual override for the dashboard's estimated audit-ready month (e.g. "jul 2026"). */
   estDateOverride: string | null;
-  /** Advisor notes on individual action-plan activities, keyed by activity ref. */
   advNotes: Record<string, string>;
-  /** Current billing plan key. */
   plan: "essentials" | "compliance" | "gxp";
 }
 
-function seedDocument(doc: ControlledDocument): ControlledDocument {
-  const body = procedureDrafts[doc.num as keyof typeof procedureDrafts] ?? "";
-  let reviewSig: ControlledDocument["reviewSig"] = null;
-  let approveSig: ControlledDocument["approveSig"] = null;
-  if (doc.docStage === "Published" || doc.docStage === "Approved") {
-    const approverName = doc.approver.includes("Executive")
-      ? "J. Mikkelsen (Executive Mgmt)"
-      : "M. Krogh (ISO)";
-    reviewSig = {
-      name: "A. Holm",
-      role: "Reviewer",
-      meaning: "Reviewed — checked for accuracy & completeness",
-      when: "18 aug 2026 10:24",
-    };
-    approveSig = {
-      name: approverName,
-      role: "Approver",
-      meaning: "Approved — authorised for release",
-      when: "22 aug 2026 14:07",
-    };
-  }
-  return { ...doc, body, reviewSig, approveSig };
+export interface Membership {
+  role: RoleName;
+  advisorMode: boolean;
 }
 
-function createBucket(): TenantBucket {
+// ---- row → domain-type mapping ----
+
+function mapActivity(r: typeof schema.activities.$inferSelect): Activity {
   return {
-    activities: seedActivities.map((a) => ({ ...a })),
-    documents: seedDocuments.map((d) => seedDocument({ ...d })),
-    policySections: seedPolicySections.map((p) => ({ ...p })),
-    policyCustomSections: [],
-    policyEdits: {},
-    policyTitleEdits: {},
-    policyState: {
-      stage: "Kladde",
-      version: seedPolicyMeta.policyVersion || "0.2",
-      publishedVersion: null,
-      validFrom: null,
-      owner: seedPolicyMeta.owner || "Direktionen",
-      reviewSig: null,
-      approveSig: null,
-      bumpKind: "minor",
-      history: [],
-    },
-    recurringControls: seedRecurringControls.map((r) => ({ ...r, history: [], form: {} })),
-    members: seedMembers.map((m) => ({ ...m })),
-    invoices: seedInvoices.map((i) => ({ ...i })),
-    auditLog: seedAuditLog.map((e) => ({ ...e })),
-    pendingSignatures: seedPendingSignatures.map((p) => ({ ...p })),
-    signedRecords: seedSignedRecords.map((s) => ({ ...s })),
-    estDateOverride: null,
-    advNotes: {
-      "1.1": "Rådgiver (Stage One): Sørg for at udnævnelsen også afspejles i politikkens §4.2 og i organisationsdiagrammet — auditor beder typisk om begge. /MS",
-    },
-    plan: "compliance",
+    ref: r.ref,
+    area: r.area,
+    action: r.action,
+    desc: r.desc,
+    deliverable: r.deliverable,
+    owner: r.owner,
+    priority: r.priority as Priority,
+    effort: r.effort as Effort,
+    phase: r.phase as Phase,
+    cadence: r.cadence,
+    deps: (r.deps as string[]) ?? [],
+    policyRef: r.policyRef,
+    standards: r.standards,
+    tags: (r.tags as Activity["tags"]) ?? [],
+    frameworks: (r.frameworks as string[]) ?? [],
+    gxp: r.gxp,
+    target: r.target,
+    status: r.status as ActivityStatus,
+    notes: r.notes,
+    evidence: (r.evidence as EvidenceLink[] | null) ?? undefined,
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- module-level singleton
-const g = globalThis as any;
-const buckets: Map<string, TenantBucket> = g.__complykitBuckets ?? new Map();
-g.__complykitBuckets = buckets;
-
-export function getTenants(): Tenant[] {
-  return tenants;
+function mapDocument(r: typeof schema.documents.$inferSelect): ControlledDocument {
+  return {
+    num: r.num,
+    title: r.title,
+    type: r.type as ControlledDocument["type"],
+    owner: r.owner,
+    approver: r.approver,
+    policyRef: r.policyRef,
+    review: r.review,
+    version: r.version,
+    docStage: r.docStage as ControlledDocument["docStage"],
+    gxp: r.gxp,
+    frameworks: (r.frameworks as string[]) ?? [],
+    effective: r.effective,
+    repo: r.repo,
+    stages: (r.stages as ControlledDocument["stages"]) ?? [],
+    body: r.body ?? "",
+    reviewSig: (r.reviewSig as ControlledDocument["reviewSig"]) ?? null,
+    approveSig: (r.approveSig as ControlledDocument["approveSig"]) ?? null,
+  };
 }
 
-export function getTenant(tenantId: string): Tenant | undefined {
-  return tenants.find((t) => t.id === tenantId);
+function mapPolicySection(r: typeof schema.policySections.$inferSelect): PolicySection {
+  return {
+    num: r.num,
+    title: r.title,
+    body: (r.body as string[]) ?? [],
+    gxp: r.gxp,
+    custom: r.custom,
+  };
 }
 
-export function getBucket(tenantId: string): TenantBucket {
-  let bucket = buckets.get(tenantId);
-  if (!bucket) {
-    bucket = createBucket();
-    buckets.set(tenantId, bucket);
-  }
-  return bucket;
+function mapRecurringControl(r: typeof schema.recurringControls.$inferSelect): RecurringControl {
+  return {
+    control: r.control,
+    cadence: r.cadence,
+    owner: r.owner,
+    policyRef: r.policyRef,
+    next: r.next,
+    lastDone: r.lastDone,
+    history: (r.history as RecurringControl["history"]) ?? [],
+    form: (r.form as Record<string, unknown>) ?? {},
+  };
 }
 
-export function appendAuditEvent(tenantId: string, event: AuditEvent): void {
-  const bucket = getBucket(tenantId);
-  bucket.auditLog = [event, ...bucket.auditLog];
+function mapMember(r: typeof schema.members.$inferSelect): Member {
+  return {
+    name: r.name,
+    email: r.email,
+    role: r.role as RoleName,
+    sso: r.sso,
+    status: r.status as Member["status"],
+    last: r.last,
+    init: r.init,
+    you: r.you,
+    advisor: r.advisor,
+  };
 }
 
-export function setEstDateOverride(tenantId: string, value: string | null): void {
-  const bucket = getBucket(tenantId);
-  bucket.estDateOverride = value;
+function mapInvoice(r: typeof schema.invoices.$inferSelect): Invoice {
+  return { date: r.date, amount: r.amount, plan: r.plan, status: r.status as Invoice["status"] };
 }
 
-function updateActivity(tenantId: string, ref: string, patch: Partial<Activity>): void {
-  const bucket = getBucket(tenantId);
-  bucket.activities = bucket.activities.map((a) => (a.ref === ref ? { ...a, ...patch } : a));
+function mapAuditEvent(r: typeof schema.auditLog.$inferSelect): AuditEvent {
+  return { time: r.time, actor: r.actor, action: r.action, target: r.target, ip: r.ip, hash: r.hash };
 }
 
-export function setActivityStatus(tenantId: string, ref: string, status: ActivityStatus): void {
-  updateActivity(tenantId, ref, { status });
+function mapPendingSignature(r: typeof schema.pendingSignatures.$inferSelect): PendingSignature {
+  return {
+    id: r.publicId,
+    doc: r.doc,
+    version: r.version,
+    role: r.role as PendingSignature["role"],
+    requested: r.requested,
+    due: r.due,
+    gxp: r.gxp,
+  };
 }
 
-export function setActivityPriority(tenantId: string, ref: string, priority: Priority): void {
-  updateActivity(tenantId, ref, { priority });
+function mapSignedRecord(r: typeof schema.signedRecords.$inferSelect): SignedRecord {
+  return { doc: r.doc, version: r.version, meaning: r.meaning, when: r.when };
 }
 
-export function setActivityPhase(tenantId: string, ref: string, phase: Phase): void {
-  updateActivity(tenantId, ref, { phase });
+function mapPolicyState(r: typeof schema.policyState.$inferSelect): PolicyState {
+  return {
+    stage: r.stage as PolicyStage,
+    version: r.version,
+    publishedVersion: r.publishedVersion,
+    validFrom: r.validFrom,
+    owner: r.owner,
+    reviewSig: (r.reviewSig as PolicySignature | null) ?? null,
+    approveSig: (r.approveSig as PolicySignature | null) ?? null,
+    bumpKind: r.bumpKind as "minor" | "major",
+    history: (r.history as PolicyHistoryEntry[]) ?? [],
+  };
 }
 
-export function setActivityEffort(tenantId: string, ref: string, effort: Effort): void {
-  updateActivity(tenantId, ref, { effort });
+// ---- reads ----
+
+function mapTenant(r: typeof schema.tenants.$inferSelect): Tenant {
+  return { ...r, role: r.role as RoleName };
 }
 
-export function setActivityOwner(tenantId: string, ref: string, owner: string): void {
-  updateActivity(tenantId, ref, { owner });
+export async function getTenants(): Promise<Tenant[]> {
+  const db = getDb();
+  const rows = await db.select().from(schema.tenants);
+  return rows.map(mapTenant);
 }
 
-export function setActivityTarget(tenantId: string, ref: string, target: string): void {
-  updateActivity(tenantId, ref, { target });
+export async function getTenant(tenantId: string): Promise<Tenant | undefined> {
+  const db = getDb();
+  const rows = await db.select().from(schema.tenants).where(eq(schema.tenants.id, tenantId));
+  return rows[0] ? mapTenant(rows[0]) : undefined;
 }
 
-export function addActivityEvidence(tenantId: string, ref: string, evidence: EvidenceLink): void {
-  const bucket = getBucket(tenantId);
-  bucket.activities = bucket.activities.map((a) =>
-    a.ref === ref ? { ...a, evidence: [...(a.evidence ?? []), evidence] } : a,
-  );
+export async function getMembership(userId: string, tenantId: string): Promise<Membership | undefined> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(schema.memberships)
+    .where(and(eq(schema.memberships.userId, userId), eq(schema.memberships.tenantId, tenantId)));
+  const m = rows[0];
+  if (!m) return undefined;
+  return { role: m.role as RoleName, advisorMode: m.advisorMode };
 }
 
-export function removeActivityEvidence(tenantId: string, ref: string, index: number): void {
-  const bucket = getBucket(tenantId);
-  bucket.activities = bucket.activities.map((a) =>
-    a.ref === ref ? { ...a, evidence: (a.evidence ?? []).filter((_, i) => i !== index) } : a,
-  );
+export async function getBucket(tenantId: string): Promise<TenantBucket> {
+  const db = getDb();
+  const [settingsRows, activityRows, documentRows, policyRows, policyStateRows, recurringRows, memberRows, invoiceRows, auditRows, pendingRows, signedRows] =
+    await Promise.all([
+      db.select().from(schema.tenantSettings).where(eq(schema.tenantSettings.tenantId, tenantId)),
+      db.select().from(schema.activities).where(eq(schema.activities.tenantId, tenantId)).orderBy(asc(schema.activities.id)),
+      db.select().from(schema.documents).where(eq(schema.documents.tenantId, tenantId)).orderBy(asc(schema.documents.num)),
+      db.select().from(schema.policySections).where(eq(schema.policySections.tenantId, tenantId)).orderBy(asc(schema.policySections.num)),
+      db.select().from(schema.policyState).where(eq(schema.policyState.tenantId, tenantId)),
+      db.select().from(schema.recurringControls).where(eq(schema.recurringControls.tenantId, tenantId)).orderBy(asc(schema.recurringControls.id)),
+      db.select().from(schema.members).where(eq(schema.members.tenantId, tenantId)).orderBy(asc(schema.members.id)),
+      db.select().from(schema.invoices).where(eq(schema.invoices.tenantId, tenantId)).orderBy(asc(schema.invoices.id)),
+      db.select().from(schema.auditLog).where(eq(schema.auditLog.tenantId, tenantId)).orderBy(desc(schema.auditLog.id)),
+      db.select().from(schema.pendingSignatures).where(eq(schema.pendingSignatures.tenantId, tenantId)).orderBy(asc(schema.pendingSignatures.id)),
+      db.select().from(schema.signedRecords).where(eq(schema.signedRecords.tenantId, tenantId)).orderBy(desc(schema.signedRecords.id)),
+    ]);
+
+  const settings = settingsRows[0];
+  const policyStateRow = policyStateRows[0];
+
+  return {
+    activities: activityRows.map(mapActivity),
+    documents: documentRows.map(mapDocument),
+    policySections: policyRows.map(mapPolicySection),
+    policyCustomSections: [],
+    policyEdits: {},
+    policyTitleEdits: {},
+    policyState: policyStateRow
+      ? mapPolicyState(policyStateRow)
+      : {
+          stage: "Kladde",
+          version: "0.2",
+          publishedVersion: null,
+          validFrom: null,
+          owner: "Direktionen",
+          reviewSig: null,
+          approveSig: null,
+          bumpKind: "minor",
+          history: [],
+        },
+    recurringControls: recurringRows.map(mapRecurringControl),
+    members: memberRows.map(mapMember),
+    invoices: invoiceRows.map(mapInvoice),
+    auditLog: auditRows.map(mapAuditEvent),
+    pendingSignatures: pendingRows.map(mapPendingSignature),
+    signedRecords: signedRows.map(mapSignedRecord),
+    estDateOverride: settings?.estDateOverride ?? null,
+    advNotes: (settings?.advNotes as Record<string, string>) ?? {},
+    plan: (settings?.billingPlanKey as TenantBucket["plan"]) ?? "compliance",
+  };
 }
 
-export function setAdvisorNote(tenantId: string, ref: string, note: string): void {
-  const bucket = getBucket(tenantId);
-  bucket.advNotes = { ...bucket.advNotes, [ref]: note };
+export async function getAllPolicySections(tenantId: string): Promise<PolicySection[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(schema.policySections)
+    .where(eq(schema.policySections.tenantId, tenantId))
+    .orderBy(asc(schema.policySections.num));
+  return rows.map(mapPolicySection);
 }
 
-function updateDocument(tenantId: string, num: number, patch: Partial<ControlledDocument>): void {
-  const bucket = getBucket(tenantId);
-  bucket.documents = bucket.documents.map((d) => (d.num === num ? { ...d, ...patch } : d));
+// ---- writes ----
+
+export async function appendAuditEvent(tenantId: string, event: AuditEvent): Promise<void> {
+  const db = getDb();
+  await db.insert(schema.auditLog).values({ tenantId, ...event });
 }
 
-export function setDocumentTitle(tenantId: string, num: number, title: string): void {
-  updateDocument(tenantId, num, { title });
+export async function setEstDateOverride(tenantId: string, value: string | null): Promise<void> {
+  const db = getDb();
+  await db.update(schema.tenantSettings).set({ estDateOverride: value }).where(eq(schema.tenantSettings.tenantId, tenantId));
 }
 
-export function setDocumentOwner(tenantId: string, num: number, owner: string): void {
-  updateDocument(tenantId, num, { owner });
+async function updateActivity(tenantId: string, ref: string, patch: Partial<typeof schema.activities.$inferInsert>): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.activities)
+    .set(patch)
+    .where(and(eq(schema.activities.tenantId, tenantId), eq(schema.activities.ref, ref)));
 }
 
-export function setDocumentApprover(tenantId: string, num: number, approver: string): void {
-  updateDocument(tenantId, num, { approver });
+export async function setActivityStatus(tenantId: string, ref: string, status: ActivityStatus): Promise<void> {
+  await updateActivity(tenantId, ref, { status });
 }
 
-export function setDocumentReview(tenantId: string, num: number, review: string): void {
-  updateDocument(tenantId, num, { review });
+export async function setActivityPriority(tenantId: string, ref: string, priority: Priority): Promise<void> {
+  await updateActivity(tenantId, ref, { priority });
 }
 
-export function setDocumentBody(tenantId: string, num: number, body: string): void {
-  updateDocument(tenantId, num, { body });
+export async function setActivityPhase(tenantId: string, ref: string, phase: Phase): Promise<void> {
+  await updateActivity(tenantId, ref, { phase });
 }
 
-export function setDocumentStage(tenantId: string, num: number, stage: ControlledDocument["docStage"]): void {
-  const bucket = getBucket(tenantId);
-  bucket.documents = bucket.documents.map((d) => {
-    if (d.num !== num) return d;
-    return {
-      ...d,
-      docStage: stage,
-      effective: stage === "Published" ? d.effective || formatDkDate(new Date()) : d.effective,
-      repo: stage === "Published" ? d.repo || "ISMS Library / Procedures" : d.repo,
-    };
+export async function setActivityEffort(tenantId: string, ref: string, effort: Effort): Promise<void> {
+  await updateActivity(tenantId, ref, { effort });
+}
+
+export async function setActivityOwner(tenantId: string, ref: string, owner: string): Promise<void> {
+  await updateActivity(tenantId, ref, { owner });
+}
+
+export async function setActivityTarget(tenantId: string, ref: string, target: string): Promise<void> {
+  await updateActivity(tenantId, ref, { target });
+}
+
+export async function addActivityEvidence(tenantId: string, ref: string, evidence: EvidenceLink): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ evidence: schema.activities.evidence })
+    .from(schema.activities)
+    .where(and(eq(schema.activities.tenantId, tenantId), eq(schema.activities.ref, ref)));
+  const current = (rows[0]?.evidence as EvidenceLink[] | null) ?? [];
+  await updateActivity(tenantId, ref, { evidence: [...current, evidence] });
+}
+
+export async function removeActivityEvidence(tenantId: string, ref: string, index: number): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ evidence: schema.activities.evidence })
+    .from(schema.activities)
+    .where(and(eq(schema.activities.tenantId, tenantId), eq(schema.activities.ref, ref)));
+  const current = (rows[0]?.evidence as EvidenceLink[] | null) ?? [];
+  await updateActivity(tenantId, ref, { evidence: current.filter((_, i) => i !== index) });
+}
+
+export async function setAdvisorNote(tenantId: string, ref: string, note: string): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.tenantSettings)
+    .set({ advNotes: sql`${schema.tenantSettings.advNotes} || ${JSON.stringify({ [ref]: note })}::jsonb` })
+    .where(eq(schema.tenantSettings.tenantId, tenantId));
+}
+
+async function updateDocument(tenantId: string, num: number, patch: Partial<typeof schema.documents.$inferInsert>): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.documents)
+    .set(patch)
+    .where(and(eq(schema.documents.tenantId, tenantId), eq(schema.documents.num, num)));
+}
+
+export async function setDocumentTitle(tenantId: string, num: number, title: string): Promise<void> {
+  await updateDocument(tenantId, num, { title });
+}
+
+export async function setDocumentOwner(tenantId: string, num: number, owner: string): Promise<void> {
+  await updateDocument(tenantId, num, { owner });
+}
+
+export async function setDocumentApprover(tenantId: string, num: number, approver: string): Promise<void> {
+  await updateDocument(tenantId, num, { approver });
+}
+
+export async function setDocumentReview(tenantId: string, num: number, review: string): Promise<void> {
+  await updateDocument(tenantId, num, { review });
+}
+
+export async function setDocumentBody(tenantId: string, num: number, body: string): Promise<void> {
+  await updateDocument(tenantId, num, { body });
+}
+
+export async function setDocumentStage(tenantId: string, num: number, stage: ControlledDocument["docStage"]): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ effective: schema.documents.effective, repo: schema.documents.repo })
+    .from(schema.documents)
+    .where(and(eq(schema.documents.tenantId, tenantId), eq(schema.documents.num, num)));
+  const cur = rows[0];
+  await updateDocument(tenantId, num, {
+    docStage: stage,
+    effective: stage === "Published" ? cur?.effective || formatDkDate(new Date()) : cur?.effective,
+    repo: stage === "Published" ? cur?.repo || "ISMS Library / Procedures" : cur?.repo,
   });
 }
 
-export function sendDocumentToReview(tenantId: string, num: number): void {
-  setDocumentStage(tenantId, num, "In review");
+export async function sendDocumentToReview(tenantId: string, num: number): Promise<void> {
+  await setDocumentStage(tenantId, num, "In review");
 }
 
-export function signDocument(tenantId: string, num: number, kind: "review" | "approve", name: string): void {
-  const bucket = getBucket(tenantId);
+export async function signDocument(tenantId: string, num: number, kind: "review" | "approve", name: string): Promise<void> {
   const when = formatDkDateTime(new Date());
-  bucket.documents = bucket.documents.map((d) => {
-    if (d.num !== num) return d;
-    if (kind === "review") {
-      return { ...d, reviewSig: { name, role: "Reviewer", meaning: "Reviewed — checked for accuracy & completeness", when } };
-    }
-    return {
-      ...d,
+  if (kind === "review") {
+    await updateDocument(tenantId, num, {
+      reviewSig: { name, role: "Reviewer", meaning: "Reviewed — checked for accuracy & completeness", when },
+    });
+  } else {
+    await updateDocument(tenantId, num, {
       approveSig: { name, role: "Approver", meaning: "Approved — authorised for release", when },
       docStage: "Approved",
-    };
+    });
+  }
+}
+
+export async function publishDocument(tenantId: string, num: number): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ effective: schema.documents.effective, repo: schema.documents.repo })
+    .from(schema.documents)
+    .where(and(eq(schema.documents.tenantId, tenantId), eq(schema.documents.num, num)));
+  const cur = rows[0];
+  const today = formatDkDate(new Date());
+  await updateDocument(tenantId, num, {
+    docStage: "Published",
+    version: "1.0",
+    effective: cur?.effective || today,
+    repo: cur?.repo || "ISMS Library / Procedures",
   });
 }
 
-export function publishDocument(tenantId: string, num: number): void {
-  const bucket = getBucket(tenantId);
-  const today = formatDkDate(new Date());
-  bucket.documents = bucket.documents.map((d) =>
-    d.num === num
-      ? { ...d, docStage: "Published", version: "1.0", effective: d.effective || today, repo: d.repo || "ISMS Library / Procedures" }
-      : d,
-  );
+export async function reopenDocument(tenantId: string, num: number): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ version: schema.documents.version })
+    .from(schema.documents)
+    .where(and(eq(schema.documents.tenantId, tenantId), eq(schema.documents.num, num)));
+  const cur = rows[0];
+  await updateDocument(tenantId, num, {
+    docStage: "Drafting",
+    reviewSig: null,
+    approveSig: null,
+    version: cur ? bumpVersion(cur.version) : "0.1",
+  });
 }
 
-export function reopenDocument(tenantId: string, num: number): void {
-  const bucket = getBucket(tenantId);
-  bucket.documents = bucket.documents.map((d) =>
-    d.num === num
-      ? { ...d, docStage: "Drafting", reviewSig: null, approveSig: null, version: bumpVersion(d.version) }
-      : d,
-  );
-}
-
-export function addDocument(tenantId: string): number {
-  const bucket = getBucket(tenantId);
-  const num = bucket.documents.length ? Math.max(...bucket.documents.map((d) => d.num)) + 1 : 1;
-  const doc: ControlledDocument = {
+export async function addDocument(tenantId: string): Promise<number> {
+  const db = getDb();
+  const rows = await db
+    .select({ num: schema.documents.num })
+    .from(schema.documents)
+    .where(eq(schema.documents.tenantId, tenantId));
+  const num = rows.length ? Math.max(...rows.map((r) => r.num)) + 1 : 1;
+  await db.insert(schema.documents).values({
+    tenantId,
     num,
     title: `New controlled document ${num}`,
     type: "Procedure",
@@ -324,74 +488,80 @@ export function addDocument(tenantId: string): number {
     body: "",
     reviewSig: null,
     approveSig: null,
-  };
-  bucket.documents = [...bucket.documents, doc];
+  });
   return num;
 }
 
-export function getAllPolicySections(tenantId: string): PolicySection[] {
-  const bucket = getBucket(tenantId);
-  return [...bucket.policySections, ...bucket.policyCustomSections];
+export async function setPolicySectionBody(tenantId: string, num: number, text: string): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.policySections)
+    .set({ body: text.split(/\n{2,}/) })
+    .where(and(eq(schema.policySections.tenantId, tenantId), eq(schema.policySections.num, num)));
 }
 
-export function setPolicySectionBody(tenantId: string, num: number, text: string): void {
-  const bucket = getBucket(tenantId);
-  bucket.policyEdits = { ...bucket.policyEdits, [num]: text };
+export async function setPolicySectionTitle(tenantId: string, num: number, title: string, _custom: boolean): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.policySections)
+    .set({ title })
+    .where(and(eq(schema.policySections.tenantId, tenantId), eq(schema.policySections.num, num)));
 }
 
-export function setPolicySectionTitle(tenantId: string, num: number, title: string, custom: boolean): void {
-  const bucket = getBucket(tenantId);
-  if (custom) {
-    bucket.policyCustomSections = bucket.policyCustomSections.map((s) => (s.num === num ? { ...s, title } : s));
-  } else {
-    bucket.policyTitleEdits = { ...bucket.policyTitleEdits, [num]: title };
-  }
-}
-
-export function addPolicySection(tenantId: string, title: string): number {
-  const bucket = getBucket(tenantId);
-  const nums = [...bucket.policySections, ...bucket.policyCustomSections].map((s) => s.num);
-  const num = nums.length ? Math.max(...nums) + 1 : 1;
-  bucket.policyCustomSections = [...bucket.policyCustomSections, { num, title, body: [], gxp: false, custom: true }];
+export async function addPolicySection(tenantId: string, title: string): Promise<number> {
+  const db = getDb();
+  const rows = await db
+    .select({ num: schema.policySections.num })
+    .from(schema.policySections)
+    .where(eq(schema.policySections.tenantId, tenantId));
+  const num = rows.length ? Math.max(...rows.map((r) => r.num)) + 1 : 1;
+  await db.insert(schema.policySections).values({ tenantId, num, title, body: [], gxp: false, custom: true });
   return num;
 }
 
-export function removePolicySection(tenantId: string, num: number): void {
-  const bucket = getBucket(tenantId);
-  bucket.policyCustomSections = bucket.policyCustomSections.filter((s) => s.num !== num);
-  const edits = { ...bucket.policyEdits };
-  delete edits[num];
-  bucket.policyEdits = edits;
+export async function removePolicySection(tenantId: string, num: number): Promise<void> {
+  const db = getDb();
+  await db
+    .delete(schema.policySections)
+    .where(and(eq(schema.policySections.tenantId, tenantId), eq(schema.policySections.num, num), eq(schema.policySections.custom, true)));
 }
 
-export function setPolicyOwner(tenantId: string, owner: string): void {
-  const bucket = getBucket(tenantId);
-  bucket.policyState = { ...bucket.policyState, owner };
+export async function setPolicyOwner(tenantId: string, owner: string): Promise<void> {
+  const db = getDb();
+  await db.update(schema.policyState).set({ owner }).where(eq(schema.policyState.tenantId, tenantId));
 }
 
-export function setPolicyBumpKind(tenantId: string, bumpKind: "minor" | "major"): void {
-  const bucket = getBucket(tenantId);
-  bucket.policyState = { ...bucket.policyState, bumpKind };
+export async function setPolicyBumpKind(tenantId: string, bumpKind: "minor" | "major"): Promise<void> {
+  const db = getDb();
+  await db.update(schema.policyState).set({ bumpKind }).where(eq(schema.policyState.tenantId, tenantId));
 }
 
-export function sendPolicyToReview(tenantId: string): void {
-  const bucket = getBucket(tenantId);
-  bucket.policyState = { ...bucket.policyState, stage: "I review" };
+export async function sendPolicyToReview(tenantId: string): Promise<void> {
+  const db = getDb();
+  await db.update(schema.policyState).set({ stage: "I review" }).where(eq(schema.policyState.tenantId, tenantId));
 }
 
-export function signPolicy(tenantId: string, kind: "review" | "approve", name: string): void {
-  const bucket = getBucket(tenantId);
+export async function signPolicy(tenantId: string, kind: "review" | "approve", name: string): Promise<void> {
+  const db = getDb();
   const when = formatDkDateTime(new Date());
   if (kind === "review") {
-    bucket.policyState = { ...bucket.policyState, reviewSig: { name, when } };
+    await db
+      .update(schema.policyState)
+      .set({ reviewSig: { name, when } })
+      .where(eq(schema.policyState.tenantId, tenantId));
   } else {
-    bucket.policyState = { ...bucket.policyState, approveSig: { name, when }, stage: "Godkendt" };
+    await db
+      .update(schema.policyState)
+      .set({ approveSig: { name, when }, stage: "Godkendt" })
+      .where(eq(schema.policyState.tenantId, tenantId));
   }
 }
 
-export function publishPolicy(tenantId: string): void {
-  const bucket = getBucket(tenantId);
-  const p = bucket.policyState;
+export async function publishPolicy(tenantId: string): Promise<void> {
+  const db = getDb();
+  const rows = await db.select().from(schema.policyState).where(eq(schema.policyState.tenantId, tenantId));
+  const p = rows[0];
+  if (!p) return;
   const today = formatDkDate(new Date());
   let version: string;
   if (!p.publishedVersion) {
@@ -402,57 +572,77 @@ export function publishPolicy(tenantId: string): void {
     const min = parseInt(minStr, 10) || 0;
     version = p.bumpKind === "major" ? `${maj + 1}.0` : `${maj}.${min + 1}`;
   }
-  bucket.policyState = {
-    ...p,
-    version,
-    publishedVersion: version,
-    validFrom: today,
-    stage: "Publiceret",
-    bumpKind: "minor",
-    history: [
-      { version, validFrom: today, approvedBy: p.approveSig?.name ?? "—", when: formatDkDateTime(new Date()) },
-      ...p.history,
-    ],
-  };
+  const approvedBy = (p.approveSig as PolicySignature | null)?.name ?? "—";
+  const history = (p.history as PolicyHistoryEntry[]) ?? [];
+  await db
+    .update(schema.policyState)
+    .set({
+      version,
+      publishedVersion: version,
+      validFrom: today,
+      stage: "Publiceret",
+      bumpKind: "minor",
+      history: [{ version, validFrom: today, approvedBy, when: formatDkDateTime(new Date()) }, ...history],
+    })
+    .where(eq(schema.policyState.tenantId, tenantId));
 }
 
-export function reopenPolicy(tenantId: string): void {
-  const bucket = getBucket(tenantId);
-  bucket.policyState = { ...bucket.policyState, stage: "Kladde", reviewSig: null, approveSig: null };
+export async function reopenPolicy(tenantId: string): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.policyState)
+    .set({ stage: "Kladde", reviewSig: null, approveSig: null })
+    .where(eq(schema.policyState.tenantId, tenantId));
 }
 
-export function setRecurringCadence(tenantId: string, control: string, cadence: string): void {
-  const bucket = getBucket(tenantId);
-  bucket.recurringControls = bucket.recurringControls.map((r) => (r.control === control ? { ...r, cadence } : r));
+export async function setRecurringCadence(tenantId: string, control: string, cadence: string): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.recurringControls)
+    .set({ cadence })
+    .where(and(eq(schema.recurringControls.tenantId, tenantId), eq(schema.recurringControls.control, control)));
 }
 
-export function setRecurringFormField(tenantId: string, control: string, key: string, value: unknown): void {
-  const bucket = getBucket(tenantId);
-  bucket.recurringControls = bucket.recurringControls.map((r) =>
-    r.control === control ? { ...r, form: { ...(r.form ?? {}), [key]: value } } : r,
-  );
+export async function setRecurringFormField(tenantId: string, control: string, key: string, value: unknown): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.recurringControls)
+    .set({ form: sql`${schema.recurringControls.form} || ${JSON.stringify({ [key]: value })}::jsonb` })
+    .where(and(eq(schema.recurringControls.tenantId, tenantId), eq(schema.recurringControls.control, control)));
 }
 
-export function toggleRecurringChecklistItem(tenantId: string, control: string, fieldKey: string, idx: number): void {
-  const bucket = getBucket(tenantId);
-  bucket.recurringControls = bucket.recurringControls.map((r) => {
-    if (r.control !== control) return r;
-    const cur = { ...((r.form?.[fieldKey] as Record<number, boolean>) ?? {}) };
-    cur[idx] = !cur[idx];
-    return { ...r, form: { ...(r.form ?? {}), [fieldKey]: cur } };
-  });
+export async function toggleRecurringChecklistItem(tenantId: string, control: string, fieldKey: string, idx: number): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ form: schema.recurringControls.form })
+    .from(schema.recurringControls)
+    .where(and(eq(schema.recurringControls.tenantId, tenantId), eq(schema.recurringControls.control, control)));
+  const form = (rows[0]?.form as Record<string, unknown>) ?? {};
+  const cur = { ...((form[fieldKey] as Record<number, boolean>) ?? {}) };
+  cur[idx] = !cur[idx];
+  await db
+    .update(schema.recurringControls)
+    .set({ form: { ...form, [fieldKey]: cur } })
+    .where(and(eq(schema.recurringControls.tenantId, tenantId), eq(schema.recurringControls.control, control)));
 }
 
-export function completeRecurring(tenantId: string, control: string): void {
-  const bucket = getBucket(tenantId);
-  const r = bucket.recurringControls.find((x) => x.control === control);
-  if (!r || !r.form || !r.form.outcome) return;
+export async function completeRecurring(tenantId: string, control: string): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(schema.recurringControls)
+    .where(and(eq(schema.recurringControls.tenantId, tenantId), eq(schema.recurringControls.control, control)));
+  const r = rows[0];
+  const form = (r?.form as Record<string, unknown>) ?? {};
+  if (!r || !form.outcome) return;
   const today = formatDkDate(new Date());
   const next = nextDueFromCadence(r.cadence, new Date());
-  const entry = { when: today, outcome: String(r.form.outcome), form: r.form };
-  bucket.recurringControls = bucket.recurringControls.map((x) =>
-    x.control === control ? { ...x, lastDone: today, next, history: [entry, ...(x.history ?? [])] } : x,
-  );
+  const history = (r.history as PolicyHistoryEntry[]) ?? [];
+  const entry = { when: today, outcome: String(form.outcome), form };
+  await db
+    .update(schema.recurringControls)
+    .set({ lastDone: today, next, history: [entry, ...history] })
+    .where(and(eq(schema.recurringControls.tenantId, tenantId), eq(schema.recurringControls.control, control)));
 }
 
 function deriveNameAndInitials(email: string): { name: string; init: string } {
@@ -463,48 +653,75 @@ function deriveNameAndInitials(email: string): { name: string; init: string } {
   return { name, init };
 }
 
-export function inviteMember(tenantId: string, actorName: string, email: string, role: RoleName): void {
+export async function inviteMember(tenantId: string, actorName: string, email: string, role: RoleName): Promise<void> {
   if (!/.+@.+\..+/.test(email)) return;
-  const bucket = getBucket(tenantId);
+  const db = getDb();
   const { name, init } = deriveNameAndInitials(email);
-  const member: Member = { name, email, role, sso: false, status: "Invited", last: "—", init };
-  bucket.members = [...bucket.members, member];
-  bucket.auditLog = [
-    { time: auditStamp(new Date()), actor: actorName, action: "member.invite", target: `${email} → ${role}`, ip: "62.243.14.7", hash: rndHash() },
-    ...bucket.auditLog,
-  ];
+  await db.insert(schema.members).values({ tenantId, name, email, role, sso: false, status: "Invited", last: "—", init });
+  await db.insert(schema.auditLog).values({
+    tenantId,
+    time: auditStamp(new Date()),
+    actor: actorName,
+    action: "member.invite",
+    target: `${email} → ${role}`,
+    ip: "62.243.14.7",
+    hash: rndHash(),
+  });
 }
 
-export function removeMember(tenantId: string, actorName: string, email: string): void {
-  const bucket = getBucket(tenantId);
-  const m = bucket.members.find((x) => x.email === email);
+export async function removeMember(tenantId: string, actorName: string, email: string): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(schema.members)
+    .where(and(eq(schema.members.tenantId, tenantId), eq(schema.members.email, email)));
+  const m = rows[0];
   if (!m || m.you) return;
-  bucket.members = bucket.members.filter((x) => x.email !== email);
-  bucket.auditLog = [
-    { time: auditStamp(new Date()), actor: actorName, action: "member.remove", target: `${email} (${m.role})`, ip: "62.243.14.7", hash: rndHash() },
-    ...bucket.auditLog,
-  ];
+  await db.delete(schema.members).where(and(eq(schema.members.tenantId, tenantId), eq(schema.members.email, email)));
+  await db.insert(schema.auditLog).values({
+    tenantId,
+    time: auditStamp(new Date()),
+    actor: actorName,
+    action: "member.remove",
+    target: `${email} (${m.role})`,
+    ip: "62.243.14.7",
+    hash: rndHash(),
+  });
 }
 
-export function setMemberRole(tenantId: string, email: string, role: RoleName): void {
-  const bucket = getBucket(tenantId);
-  bucket.members = bucket.members.map((m) => (m.email === email ? { ...m, role } : m));
+export async function setMemberRole(tenantId: string, email: string, role: RoleName): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.members)
+    .set({ role })
+    .where(and(eq(schema.members.tenantId, tenantId), eq(schema.members.email, email)));
 }
 
-export function setBillingPlan(tenantId: string, plan: "essentials" | "compliance" | "gxp"): void {
-  const bucket = getBucket(tenantId);
-  bucket.plan = plan;
+export async function setBillingPlan(tenantId: string, plan: "essentials" | "compliance" | "gxp"): Promise<void> {
+  const db = getDb();
+  await db.update(schema.tenantSettings).set({ billingPlanKey: plan }).where(eq(schema.tenantSettings.tenantId, tenantId));
 }
 
-export function signPendingDocument(tenantId: string, actorName: string, id: string, meaning: string): void {
-  const bucket = getBucket(tenantId);
-  const d = bucket.pendingSignatures.find((x) => x.id === id);
+export async function signPendingDocument(tenantId: string, actorName: string, id: string, meaning: string): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(schema.pendingSignatures)
+    .where(and(eq(schema.pendingSignatures.tenantId, tenantId), eq(schema.pendingSignatures.publicId, id)));
+  const d = rows[0];
   if (!d) return;
   const version = d.version.includes("→") ? d.version.split("→").pop()!.trim() : d.version;
-  bucket.pendingSignatures = bucket.pendingSignatures.filter((x) => x.id !== id);
-  bucket.signedRecords = [{ doc: d.doc, version, meaning, when: "Just now" }, ...bucket.signedRecords];
-  bucket.auditLog = [
-    { time: auditStamp(new Date()), actor: actorName, action: "esignature.apply", target: `${d.doc} ${version}`, ip: "62.243.14.7", hash: rndHash() },
-    ...bucket.auditLog,
-  ];
+  await db
+    .delete(schema.pendingSignatures)
+    .where(and(eq(schema.pendingSignatures.tenantId, tenantId), eq(schema.pendingSignatures.publicId, id)));
+  await db.insert(schema.signedRecords).values({ tenantId, doc: d.doc, version, meaning, when: "Just now" });
+  await db.insert(schema.auditLog).values({
+    tenantId,
+    time: auditStamp(new Date()),
+    actor: actorName,
+    action: "esignature.apply",
+    target: `${d.doc} ${version}`,
+    ip: "62.243.14.7",
+    hash: rndHash(),
+  });
 }

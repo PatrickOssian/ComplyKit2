@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { signInAction } from "@/lib/actions";
+import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
 import { demoLogins } from "@/lib/data/seed";
 
 type Lang = "da" | "en";
@@ -26,6 +27,8 @@ const COPY: Record<
     pwdLabel: string;
     demoTitle: string;
     demoAdvisorRole: string;
+    submitting: string;
+    errorGeneric: string;
   }
 > = {
   da: {
@@ -50,6 +53,8 @@ const COPY: Record<
     pwdLabel: "Adgangskode",
     demoTitle: "Demo-logins (adgangskode: complykit123)",
     demoAdvisorRole: "rådgiver → Nordic Pharma",
+    submitting: "Logger ind…",
+    errorGeneric: "Forkert e-mail eller adgangskode.",
   },
   en: {
     eyebrow: "ISMS · built for regulated teams",
@@ -73,12 +78,32 @@ const COPY: Record<
     pwdLabel: "Password",
     demoTitle: "Demo logins (password: complykit123)",
     demoAdvisorRole: "advisor → Nordic Pharma",
+    submitting: "Signing in…",
+    errorGeneric: "Incorrect email or password.",
   },
 };
 
 export default function SignInPage() {
   const [lang, setLang] = useState<Lang>("da");
   const t = COPY[lang];
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const { error: signInError } = await authClient.signIn.email({ email, password });
+    setSubmitting(false);
+    if (signInError) {
+      setError(t.errorGeneric);
+      return;
+    }
+    router.push("/workspace");
+  }
 
   return (
     <div className="min-h-screen flex relative bg-white">
@@ -163,22 +188,31 @@ export default function SignInPage() {
             <div className="flex-1 h-px bg-ck-border" />
           </div>
 
-          <form action={signInAction}>
+          <form onSubmit={handleSubmit}>
             <div className="text-[12.5px] text-ck-text-2 mb-1.5">{t.emailLabel}</div>
             <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               placeholder={t.emailPh}
               className="w-full border border-ck-border-2 rounded-xl px-3.5 py-3 text-sm text-ck-ink outline-none mb-4 focus:border-ck-ink"
             />
             <div className="text-[12.5px] text-ck-text-2 mb-1.5">{t.pwdLabel}</div>
             <input
               type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               className="w-full border border-ck-border-2 rounded-xl px-3.5 py-3 text-sm text-ck-ink outline-none mb-4.5 focus:border-ck-ink"
             />
+            {error && <div className="text-[12.5px] text-ck-red mb-4 -mt-2">{error}</div>}
             <button
               type="submit"
-              className="w-full text-center bg-ck-ink hover:bg-ck-rail-2 text-white rounded-xl py-3.5 text-sm font-semibold"
+              disabled={submitting}
+              className="w-full text-center bg-ck-ink hover:bg-ck-rail-2 text-white rounded-xl py-3.5 text-sm font-semibold disabled:opacity-60"
             >
-              {t.formTitle}
+              {submitting ? t.submitting : t.formTitle}
             </button>
           </form>
 

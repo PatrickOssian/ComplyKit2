@@ -1,35 +1,54 @@
-// Mock session handling for the pre-auth phase. Stands in for a future
-// NextAuth session: reads/writes a small signed-ish cookie. Per the
-// Cloudflare Workers runbook, session checks must live in server
-// components / route handlers / Server Actions — never in middleware/proxy
-// (cookies() is unsupported there on Workers).
+// Real identity now comes from Better Auth (getAuthUser). Which
+// workspace/tenant is currently selected, and the GxP overlay toggle, are
+// app-specific UI state that Better Auth has no concept of — those still
+// live in a small cookie here. Per the Cloudflare Workers runbook, both
+// kinds of session reads must stay in server components / route handlers
+// / Server Actions — never in middleware/proxy (cookies() is unsupported
+// there on Workers).
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { auth } from "./auth";
 
-const COOKIE_NAME = "ck_session";
+const COOKIE_NAME = "ck_workspace";
 
-export interface SessionData {
+export interface WorkspaceState {
   /** null once signed in but before a tenant/workspace has been chosen. */
   tenantId: string | null;
+  /** Resolved once (from real membership data, or the advisor pseudo-tenant
+   * shortcut) when a tenant is picked, then carried forward as-is while
+   * browsing between orgs — an advisor jumping between client sites keeps
+   * their advisor mode even for orgs they have no membership row for. */
   advisorMode: boolean;
   /** Life science / GxP overlay — a session-level preference in this mock phase. */
   gxp: boolean;
 }
 
-const DEFAULT_SESSION: SessionData = { tenantId: null, advisorMode: false, gxp: true };
+const DEFAULT_WORKSPACE: WorkspaceState = { tenantId: null, advisorMode: false, gxp: true };
 
-export async function getSession(): Promise<SessionData | null> {
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export async function getAuthUser(): Promise<AuthUser | null> {
+  const result = await auth.api.getSession({ headers: await headers() });
+  if (!result) return null;
+  return { id: result.user.id, name: result.user.name, email: result.user.email };
+}
+
+export async function getWorkspace(): Promise<WorkspaceState> {
   const store = await cookies();
   const raw = store.get(COOKIE_NAME)?.value;
-  if (!raw) return null;
+  if (!raw) return DEFAULT_WORKSPACE;
   try {
-    return { ...DEFAULT_SESSION, ...JSON.parse(raw) };
+    return { ...DEFAULT_WORKSPACE, ...JSON.parse(raw) };
   } catch {
-    return null;
+    return DEFAULT_WORKSPACE;
   }
 }
 
-export async function setSession(data: SessionData): Promise<void> {
+export async function setWorkspace(data: WorkspaceState): Promise<void> {
   const store = await cookies();
   store.set(COOKIE_NAME, JSON.stringify(data), {
     httpOnly: true,
@@ -39,7 +58,7 @@ export async function setSession(data: SessionData): Promise<void> {
   });
 }
 
-export async function clearSession(): Promise<void> {
+export async function clearWorkspace(): Promise<void> {
   const store = await cookies();
   store.delete(COOKIE_NAME);
 }

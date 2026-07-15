@@ -86,13 +86,6 @@ export const tenants: Tenant[] = [
   },
 ];
 
-export const currentUser = {
-  name: "Maria Krogh",
-  email: "maria.krogh@northpharma.dk",
-  init: "MK",
-  role: "Admin" as const,
-};
-
 export const members: Member[] = [
   {
     name: "Maria Krogh",

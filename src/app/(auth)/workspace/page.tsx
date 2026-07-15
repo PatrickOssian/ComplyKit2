@@ -1,15 +1,15 @@
 import { redirect } from "next/navigation";
 import { pickTenantAction, signOutAction } from "@/lib/actions";
-import { currentUser } from "@/lib/data/seed";
 import { getTenants } from "@/lib/data/store";
-import { getSession } from "@/lib/session";
+import { getAuthUser, getWorkspace } from "@/lib/session";
 import { roleMeta } from "@/lib/domain";
 
 export default async function WorkspacePage() {
-  const session = await getSession();
-  if (!session) redirect("/signin");
+  const authUser = await getAuthUser();
+  if (!authUser) redirect("/signin");
+  const workspace = await getWorkspace();
 
-  const tenants = getTenants();
+  const tenants = await getTenants();
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#eceef1] p-10">
@@ -22,7 +22,7 @@ export default async function WorkspacePage() {
         </div>
         <h1 className="text-xl font-semibold text-ck-ink tracking-tight m-0">Vælg en workspace</h1>
 
-        {session.advisorMode && (
+        {workspace.advisorMode && (
           <div className="flex items-center gap-2.5 bg-ck-amber-bg border border-ck-amber-border rounded-xl px-3.5 py-2.5 mt-3 mb-1.5">
             <span className="w-[26px] h-[26px] rounded-md shrink-0 bg-ck-amber text-white flex items-center justify-center text-[13px]">
               ✦
@@ -83,7 +83,7 @@ export default async function WorkspacePage() {
 
         <div className="flex items-center justify-between mt-6.5 text-xs text-ck-muted">
           <div>
-            Signed in as <span className="text-ck-text-2">{currentUser.email}</span>
+            Signed in as <span className="text-ck-text-2">{authUser.email}</span>
           </div>
           <form action={signOutAction}>
             <button type="submit" className="cursor-pointer text-[#667085] hover:text-ck-ink">

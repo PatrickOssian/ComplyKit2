@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+import { getAuthUser, getWorkspace } from "@/lib/session";
 
 export default async function Home() {
-  const session = await getSession();
-  if (!session) redirect("/signin");
-  if (!session.tenantId) redirect("/workspace");
+  const authUser = await getAuthUser();
+  if (!authUser) redirect("/signin");
+  const workspace = await getWorkspace();
+  if (!workspace.tenantId) redirect("/workspace");
   redirect("/dashboard");
 }
