@@ -290,3 +290,27 @@ export function cadenceColor(cadence: string): string {
   if (/Semi/i.test(cadence)) return "#7a5af8";
   return "#0e9384";
 }
+
+export function auditCategory(action: string): string {
+  const c = action.split(".")[0];
+  if (c === "esignature") return "E-signatures";
+  if (c === "document") return "Documents";
+  if (c === "member") return "Members";
+  if (c === "auth" || c === "access") return "Access";
+  if (c === "billing") return "Billing";
+  return "Other";
+}
+
+const AUDIT_ACTION_COLORS: Record<string, { fg: string; bg: string }> = {
+  esignature: { fg: "#5925dc", bg: "#f4f3ff" },
+  document: { fg: "#067647", bg: "#ecfdf3" },
+  member: { fg: "#175cd3", bg: "#eff8ff" },
+  auth: { fg: "#175cd3", bg: "#eff8ff" },
+  billing: { fg: "#b54708", bg: "#fffaeb" },
+  action: { fg: "#0e7090", bg: "#ecfeff" },
+};
+
+export function auditActionColor(action: string): { fg: string; bg: string } {
+  const cat = action.split(".")[0];
+  return AUDIT_ACTION_COLORS[cat] ?? { fg: "#475467", bg: "#f2f4f7" };
+}

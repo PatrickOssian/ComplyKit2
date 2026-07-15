@@ -20,6 +20,7 @@ import type {
   PolicyStage,
   Priority,
   RecurringControl,
+  RoleName,
   SignedRecord,
   Tenant,
 } from "./types";
@@ -37,7 +38,7 @@ import {
   signedRecords as seedSignedRecords,
   tenants,
 } from "./seed";
-import { bumpVersion, formatDkDate, formatDkDateTime, nextDueFromCadence } from "../domain";
+import { auditStamp, bumpVersion, formatDkDate, formatDkDateTime, nextDueFromCadence, rndHash } from "../domain";
 
 export interface PolicySignature {
   name: string;
@@ -84,6 +85,8 @@ export interface TenantBucket {
   estDateOverride: string | null;
   /** Advisor notes on individual action-plan activities, keyed by activity ref. */
   advNotes: Record<string, string>;
+  /** Current billing plan key. */
+  plan: "essentials" | "compliance" | "gxp";
 }
 
 function seedDocument(doc: ControlledDocument): ControlledDocument {
@@ -139,6 +142,7 @@ function createBucket(): TenantBucket {
     advNotes: {
       "1.1": "Rådgiver (Stage One): Sørg for at udnævnelsen også afspejles i politikkens §4.2 og i organisationsdiagrammet — auditor beder typisk om begge. /MS",
     },
+    plan: "compliance",
   };
 }
 
@@ -449,4 +453,58 @@ export function completeRecurring(tenantId: string, control: string): void {
   bucket.recurringControls = bucket.recurringControls.map((x) =>
     x.control === control ? { ...x, lastDone: today, next, history: [entry, ...(x.history ?? [])] } : x,
   );
+}
+
+function deriveNameAndInitials(email: string): { name: string; init: string } {
+  const local = email.split("@")[0].replace(/[._-]+/g, " ").trim();
+  const words = local.split(" ").filter(Boolean);
+  const name = words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ") || email;
+  const init = (words.map((w) => w[0]).join("").slice(0, 2) || email[0]).toUpperCase();
+  return { name, init };
+}
+
+export function inviteMember(tenantId: string, actorName: string, email: string, role: RoleName): void {
+  if (!/.+@.+\..+/.test(email)) return;
+  const bucket = getBucket(tenantId);
+  const { name, init } = deriveNameAndInitials(email);
+  const member: Member = { name, email, role, sso: false, status: "Invited", last: "—", init };
+  bucket.members = [...bucket.members, member];
+  bucket.auditLog = [
+    { time: auditStamp(new Date()), actor: actorName, action: "member.invite", target: `${email} → ${role}`, ip: "62.243.14.7", hash: rndHash() },
+    ...bucket.auditLog,
+  ];
+}
+
+export function removeMember(tenantId: string, actorName: string, email: string): void {
+  const bucket = getBucket(tenantId);
+  const m = bucket.members.find((x) => x.email === email);
+  if (!m || m.you) return;
+  bucket.members = bucket.members.filter((x) => x.email !== email);
+  bucket.auditLog = [
+    { time: auditStamp(new Date()), actor: actorName, action: "member.remove", target: `${email} (${m.role})`, ip: "62.243.14.7", hash: rndHash() },
+    ...bucket.auditLog,
+  ];
+}
+
+export function setMemberRole(tenantId: string, email: string, role: RoleName): void {
+  const bucket = getBucket(tenantId);
+  bucket.members = bucket.members.map((m) => (m.email === email ? { ...m, role } : m));
+}
+
+export function setBillingPlan(tenantId: string, plan: "essentials" | "compliance" | "gxp"): void {
+  const bucket = getBucket(tenantId);
+  bucket.plan = plan;
+}
+
+export function signPendingDocument(tenantId: string, actorName: string, id: string, meaning: string): void {
+  const bucket = getBucket(tenantId);
+  const d = bucket.pendingSignatures.find((x) => x.id === id);
+  if (!d) return;
+  const version = d.version.includes("→") ? d.version.split("→").pop()!.trim() : d.version;
+  bucket.pendingSignatures = bucket.pendingSignatures.filter((x) => x.id !== id);
+  bucket.signedRecords = [{ doc: d.doc, version, meaning, when: "Just now" }, ...bucket.signedRecords];
+  bucket.auditLog = [
+    { time: auditStamp(new Date()), actor: actorName, action: "esignature.apply", target: `${d.doc} ${version}`, ip: "62.243.14.7", hash: rndHash() },
+    ...bucket.auditLog,
+  ];
 }

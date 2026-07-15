@@ -7,9 +7,11 @@ import {
   addDocument,
   addPolicySection,
   completeRecurring,
+  inviteMember,
   publishDocument,
   publishPolicy,
   removeActivityEvidence,
+  removeMember,
   removePolicySection,
   reopenDocument,
   reopenPolicy,
@@ -22,6 +24,7 @@ import {
   setActivityStatus,
   setActivityTarget,
   setAdvisorNote,
+  setBillingPlan,
   setDocumentApprover,
   setDocumentBody,
   setDocumentOwner,
@@ -29,6 +32,7 @@ import {
   setDocumentStage,
   setDocumentTitle,
   setEstDateOverride,
+  setMemberRole,
   setPolicyBumpKind,
   setPolicyOwner,
   setPolicySectionBody,
@@ -36,11 +40,13 @@ import {
   setRecurringCadence,
   setRecurringFormField,
   signDocument,
+  signPendingDocument,
   signPolicy,
   toggleRecurringChecklistItem,
 } from "./data/store";
+import { currentUser } from "./data/seed";
 import { isoDateToDk, monthInputValueToEst, nextStatus, normalizeUrl } from "./domain";
-import type { ActivityStatus, DocLifecycleStage, Effort, Phase, Priority } from "./data/types";
+import type { ActivityStatus, DocLifecycleStage, Effort, Phase, Priority, RoleName } from "./data/types";
 
 async function requireTenantId(): Promise<string> {
   const session = await getSession();
@@ -294,4 +300,29 @@ export async function toggleRecurringChecklistItemAction(control: string, fieldK
 export async function completeRecurringAction(control: string): Promise<void> {
   const tenantId = await requireTenantId();
   completeRecurring(tenantId, control);
+}
+
+export async function inviteMemberAction(email: string, role: RoleName): Promise<void> {
+  const tenantId = await requireTenantId();
+  inviteMember(tenantId, currentUser.name, email, role);
+}
+
+export async function removeMemberAction(email: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  removeMember(tenantId, currentUser.name, email);
+}
+
+export async function setMemberRoleAction(email: string, role: RoleName): Promise<void> {
+  const tenantId = await requireTenantId();
+  setMemberRole(tenantId, email, role);
+}
+
+export async function setBillingPlanAction(plan: "essentials" | "compliance" | "gxp"): Promise<void> {
+  const tenantId = await requireTenantId();
+  setBillingPlan(tenantId, plan);
+}
+
+export async function signPendingDocumentAction(id: string, meaning: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  signPendingDocument(tenantId, currentUser.name, id, meaning);
 }

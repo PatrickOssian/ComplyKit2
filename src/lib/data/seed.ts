@@ -366,3 +366,67 @@ export const helpGuides: HelpGuide[] = [
 
 export const disclaimer =
   "ComplyKit understøtter alignment med de nævnte standarder. Organisationen bør ikke fremstå som certificeret, medmindre certificering er selvstændigt og eksplicit opnået.";
+
+export interface PlanDef {
+  key: "essentials" | "compliance" | "gxp";
+  name: string;
+  tagline: string;
+  price: string;
+  unit: string;
+  seats: string;
+  accent: string;
+  features: string[];
+}
+
+export const planDefs: PlanDef[] = [
+  {
+    key: "essentials",
+    name: "Essentials",
+    tagline: "NIS2 baseline for a single team",
+    price: "€290",
+    unit: "/mo",
+    seats: "Up to 5 users",
+    accent: "#667085",
+    features: [
+      "ISMS policy editor",
+      "Action plan (Appendix A)",
+      "Controlled document register",
+      "1 framework crosswalk",
+      "Email support",
+    ],
+  },
+  {
+    key: "compliance",
+    name: "Compliance",
+    tagline: "Multi-user ISMS with full audit trail",
+    price: "€790",
+    unit: "/mo",
+    seats: "Up to 25 users",
+    accent: "#3538cd",
+    features: [
+      "Everything in Essentials",
+      "Role-based access (RBAC)",
+      "All framework crosswalks",
+      "Immutable audit log",
+      "SSO — Entra ID / SAML",
+      "Priority support",
+    ],
+  },
+  {
+    key: "gxp",
+    name: "GxP Validated",
+    tagline: "21 CFR Part 11 & EU Annex 11 ready",
+    price: "Custom",
+    unit: "",
+    seats: "Unlimited users",
+    accent: "#7a5af8",
+    features: [
+      "Everything in Compliance",
+      "Part 11 electronic signatures",
+      "Validation & IQ/OQ evidence",
+      "ALCOA+ record controls",
+      "Advisor seat (Stage One)",
+      "Dedicated success manager",
+    ],
+  },
+];
