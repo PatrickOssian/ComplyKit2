@@ -2,9 +2,36 @@
 // tokens, readiness scoring, date/hash formatting helpers). No React, no
 // data fetching — safe to import from server or client code.
 
-import type { Activity, ActivityStatus, ControlledDocument, Priority, RoleName } from "./data/types";
+import type { Activity, ActivityStatus, ControlledDocument, Effort, Phase, Priority, RoleName } from "./data/types";
 
 export const ROLES: RoleName[] = ["Admin", "Editor", "Auditor", "Viewer"];
+
+export const STATUSES: ActivityStatus[] = [
+  "Not started",
+  "In progress",
+  "Implemented",
+  "Approved plan",
+  "Deferred",
+  "N/A",
+];
+export const PRIOS: Priority[] = ["Critical", "High", "Medium", "Low"];
+export const PHASES: Phase[] = ["Phase 0", "Phase 1", "Phase 2", "Phase 3"];
+export const EFFORTS: Effort[] = ["XS", "S", "M", "L", "XL"];
+export const OWNER_ROLES = [
+  "Executive Management",
+  "Information Security Officer",
+  "IT",
+  "IT / MSP",
+  "System Owners",
+  "Data Owners",
+  "HR",
+  "Project Leads",
+  "ISO",
+];
+
+export function nextStatus(current: ActivityStatus): ActivityStatus {
+  return STATUSES[(STATUSES.indexOf(current) + 1) % STATUSES.length];
+}
 
 export interface RoleMeta {
   bg: string;
@@ -146,6 +173,34 @@ export function estToMonthInputValue(estDate: string): string {
 export function monthInputValueToEst(value: string): string {
   const [yr, mo] = value.split("-");
   return `${DK_MO[parseInt(mo, 10) - 1]} ${yr}`;
+}
+
+/** "15 jul 2026" -> "2026-07-15", for <input type="date"> values. */
+export function dkDateToIso(str: string | undefined | null): string {
+  if (!str) return "";
+  const parts = String(str).trim().split(/\s+/);
+  if (parts.length < 3) return "";
+  const day = parts[0].padStart(2, "0");
+  const mi = DK_MO.indexOf(parts[1].toLowerCase());
+  if (mi < 0) return "";
+  return `${parts[2]}-${String(mi + 1).padStart(2, "0")}-${day}`;
+}
+
+/** "2026-07-15" -> "15 jul 2026", the reverse of dkDateToIso(). */
+export function isoDateToDk(iso: string | undefined | null): string {
+  if (!iso) return "";
+  const parts = iso.split("-");
+  if (parts.length < 3) return "";
+  const mi = parseInt(parts[1], 10) - 1;
+  if (mi < 0 || mi > 11) return "";
+  return `${parseInt(parts[2], 10)} ${DK_MO[mi]} ${parts[0]}`;
+}
+
+/** Normalizes a user-entered evidence URL, defaulting to https:// if no scheme given. */
+export function normalizeUrl(u: string | undefined | null): string {
+  const trimmed = (u ?? "").trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
 export function formatDkDateTime(d: Date): string {

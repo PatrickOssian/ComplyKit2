@@ -7,13 +7,18 @@
 
 import type {
   Activity,
+  ActivityStatus,
   AuditEvent,
   ControlledDocument,
+  Effort,
+  EvidenceLink,
   Invoice,
   Member,
   PendingSignature,
+  Phase,
   PolicySection,
   PolicyStage,
+  Priority,
   RecurringControl,
   SignedRecord,
   Tenant,
@@ -57,6 +62,8 @@ export interface TenantBucket {
   signedRecords: SignedRecord[];
   /** Manual override for the dashboard's estimated audit-ready month (e.g. "jul 2026"). */
   estDateOverride: string | null;
+  /** Advisor notes on individual action-plan activities, keyed by activity ref. */
+  advNotes: Record<string, string>;
 }
 
 function seedDocument(doc: ControlledDocument): ControlledDocument {
@@ -105,6 +112,9 @@ function createBucket(): TenantBucket {
     pendingSignatures: seedPendingSignatures.map((p) => ({ ...p })),
     signedRecords: seedSignedRecords.map((s) => ({ ...s })),
     estDateOverride: null,
+    advNotes: {
+      "1.1": "Rådgiver (Stage One): Sørg for at udnævnelsen også afspejles i politikkens §4.2 og i organisationsdiagrammet — auditor beder typisk om begge. /MS",
+    },
   };
 }
 
@@ -138,4 +148,52 @@ export function appendAuditEvent(tenantId: string, event: AuditEvent): void {
 export function setEstDateOverride(tenantId: string, value: string | null): void {
   const bucket = getBucket(tenantId);
   bucket.estDateOverride = value;
+}
+
+function updateActivity(tenantId: string, ref: string, patch: Partial<Activity>): void {
+  const bucket = getBucket(tenantId);
+  bucket.activities = bucket.activities.map((a) => (a.ref === ref ? { ...a, ...patch } : a));
+}
+
+export function setActivityStatus(tenantId: string, ref: string, status: ActivityStatus): void {
+  updateActivity(tenantId, ref, { status });
+}
+
+export function setActivityPriority(tenantId: string, ref: string, priority: Priority): void {
+  updateActivity(tenantId, ref, { priority });
+}
+
+export function setActivityPhase(tenantId: string, ref: string, phase: Phase): void {
+  updateActivity(tenantId, ref, { phase });
+}
+
+export function setActivityEffort(tenantId: string, ref: string, effort: Effort): void {
+  updateActivity(tenantId, ref, { effort });
+}
+
+export function setActivityOwner(tenantId: string, ref: string, owner: string): void {
+  updateActivity(tenantId, ref, { owner });
+}
+
+export function setActivityTarget(tenantId: string, ref: string, target: string): void {
+  updateActivity(tenantId, ref, { target });
+}
+
+export function addActivityEvidence(tenantId: string, ref: string, evidence: EvidenceLink): void {
+  const bucket = getBucket(tenantId);
+  bucket.activities = bucket.activities.map((a) =>
+    a.ref === ref ? { ...a, evidence: [...(a.evidence ?? []), evidence] } : a,
+  );
+}
+
+export function removeActivityEvidence(tenantId: string, ref: string, index: number): void {
+  const bucket = getBucket(tenantId);
+  bucket.activities = bucket.activities.map((a) =>
+    a.ref === ref ? { ...a, evidence: (a.evidence ?? []).filter((_, i) => i !== index) } : a,
+  );
+}
+
+export function setAdvisorNote(tenantId: string, ref: string, note: string): void {
+  const bucket = getBucket(tenantId);
+  bucket.advNotes = { ...bucket.advNotes, [ref]: note };
 }
