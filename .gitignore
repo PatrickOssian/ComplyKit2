@@ -42,6 +42,7 @@ next-env.d.ts
 
 # OpenNext
 .open-next
+.bundle-check-tmp
 
 # wrangler files
 .wrangler

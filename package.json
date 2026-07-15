@@ -7,9 +7,11 @@
     "dev": "next dev",
     "start": "next start",
     "lint": "eslint",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "check-bundle-size": "node scripts/check-bundle-size.mjs",
+    "cf:build": "opennextjs-cloudflare build && npm run check-bundle-size",
+    "preview": "opennextjs-cloudflare build && npm run check-bundle-size && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && npm run check-bundle-size && opennextjs-cloudflare deploy",
+    "upload": "opennextjs-cloudflare build && npm run check-bundle-size && opennextjs-cloudflare upload",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
