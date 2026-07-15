@@ -1,7 +1,9 @@
-export default function Home() {
-  return (
-    <div className="flex flex-1 items-center justify-center">
-      <p className="text-ck-muted text-sm">ComplyKit v2 — under construction</p>
-    </div>
-  );
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/session";
+
+export default async function Home() {
+  const session = await getSession();
+  if (!session) redirect("/signin");
+  if (!session.tenantId) redirect("/workspace");
+  redirect("/dashboard");
 }
