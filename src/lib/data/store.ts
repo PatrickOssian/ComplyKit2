@@ -37,6 +37,7 @@ import {
   signedRecords as seedSignedRecords,
   tenants,
 } from "./seed";
+import { bumpVersion, formatDkDate, formatDkDateTime } from "../domain";
 
 export interface PolicyState {
   stage: PolicyStage;
@@ -196,4 +197,107 @@ export function removeActivityEvidence(tenantId: string, ref: string, index: num
 export function setAdvisorNote(tenantId: string, ref: string, note: string): void {
   const bucket = getBucket(tenantId);
   bucket.advNotes = { ...bucket.advNotes, [ref]: note };
+}
+
+function updateDocument(tenantId: string, num: number, patch: Partial<ControlledDocument>): void {
+  const bucket = getBucket(tenantId);
+  bucket.documents = bucket.documents.map((d) => (d.num === num ? { ...d, ...patch } : d));
+}
+
+export function setDocumentTitle(tenantId: string, num: number, title: string): void {
+  updateDocument(tenantId, num, { title });
+}
+
+export function setDocumentOwner(tenantId: string, num: number, owner: string): void {
+  updateDocument(tenantId, num, { owner });
+}
+
+export function setDocumentApprover(tenantId: string, num: number, approver: string): void {
+  updateDocument(tenantId, num, { approver });
+}
+
+export function setDocumentReview(tenantId: string, num: number, review: string): void {
+  updateDocument(tenantId, num, { review });
+}
+
+export function setDocumentBody(tenantId: string, num: number, body: string): void {
+  updateDocument(tenantId, num, { body });
+}
+
+export function setDocumentStage(tenantId: string, num: number, stage: ControlledDocument["docStage"]): void {
+  const bucket = getBucket(tenantId);
+  bucket.documents = bucket.documents.map((d) => {
+    if (d.num !== num) return d;
+    return {
+      ...d,
+      docStage: stage,
+      effective: stage === "Published" ? d.effective || formatDkDate(new Date()) : d.effective,
+      repo: stage === "Published" ? d.repo || "ISMS Library / Procedures" : d.repo,
+    };
+  });
+}
+
+export function sendDocumentToReview(tenantId: string, num: number): void {
+  setDocumentStage(tenantId, num, "In review");
+}
+
+export function signDocument(tenantId: string, num: number, kind: "review" | "approve", name: string): void {
+  const bucket = getBucket(tenantId);
+  const when = formatDkDateTime(new Date());
+  bucket.documents = bucket.documents.map((d) => {
+    if (d.num !== num) return d;
+    if (kind === "review") {
+      return { ...d, reviewSig: { name, role: "Reviewer", meaning: "Reviewed — checked for accuracy & completeness", when } };
+    }
+    return {
+      ...d,
+      approveSig: { name, role: "Approver", meaning: "Approved — authorised for release", when },
+      docStage: "Approved",
+    };
+  });
+}
+
+export function publishDocument(tenantId: string, num: number): void {
+  const bucket = getBucket(tenantId);
+  const today = formatDkDate(new Date());
+  bucket.documents = bucket.documents.map((d) =>
+    d.num === num
+      ? { ...d, docStage: "Published", version: "1.0", effective: d.effective || today, repo: d.repo || "ISMS Library / Procedures" }
+      : d,
+  );
+}
+
+export function reopenDocument(tenantId: string, num: number): void {
+  const bucket = getBucket(tenantId);
+  bucket.documents = bucket.documents.map((d) =>
+    d.num === num
+      ? { ...d, docStage: "Drafting", reviewSig: null, approveSig: null, version: bumpVersion(d.version) }
+      : d,
+  );
+}
+
+export function addDocument(tenantId: string): number {
+  const bucket = getBucket(tenantId);
+  const num = bucket.documents.length ? Math.max(...bucket.documents.map((d) => d.num)) + 1 : 1;
+  const doc: ControlledDocument = {
+    num,
+    title: `New controlled document ${num}`,
+    type: "Procedure",
+    owner: "Information Security Officer",
+    approver: "Information Security Officer",
+    policyRef: "—",
+    review: "Annual (or on change)",
+    version: "0.1",
+    docStage: "Not started",
+    gxp: false,
+    frameworks: ["ISO 27001"],
+    effective: "",
+    repo: "",
+    stages: [],
+    body: "",
+    reviewSig: null,
+    approveSig: null,
+  };
+  bucket.documents = [...bucket.documents, doc];
+  return num;
 }

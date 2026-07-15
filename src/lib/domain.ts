@@ -2,7 +2,16 @@
 // tokens, readiness scoring, date/hash formatting helpers). No React, no
 // data fetching — safe to import from server or client code.
 
-import type { Activity, ActivityStatus, ControlledDocument, Effort, Phase, Priority, RoleName } from "./data/types";
+import type {
+  Activity,
+  ActivityStatus,
+  ControlledDocument,
+  DocLifecycleStage,
+  Effort,
+  Phase,
+  Priority,
+  RoleName,
+} from "./data/types";
 
 export const ROLES: RoleName[] = ["Admin", "Editor", "Auditor", "Viewer"];
 
@@ -31,6 +40,39 @@ export const OWNER_ROLES = [
 
 export function nextStatus(current: ActivityStatus): ActivityStatus {
   return STATUSES[(STATUSES.indexOf(current) + 1) % STATUSES.length];
+}
+
+export const DOCSTAGES: DocLifecycleStage[] = ["Not started", "Drafting", "In review", "Approved", "Published"];
+
+export interface DocStageMeta {
+  dot: string;
+  bg: string;
+  fg: string;
+  da: string;
+}
+
+const DOC_STAGE_META: Record<DocLifecycleStage, DocStageMeta> = {
+  "Not started": { dot: "#98a2b3", bg: "#f2f4f7", fg: "#667085", da: "Ikke startet" },
+  Drafting: { dot: "#f79009", bg: "#fffaeb", fg: "#b54708", da: "Kladde" },
+  "In review": { dot: "#2e90fa", bg: "#eff8ff", fg: "#175cd3", da: "I review" },
+  Approved: { dot: "#7a5af8", bg: "#f4f3ff", fg: "#5925dc", da: "Godkendt" },
+  Published: { dot: "#12b76a", bg: "#ecfdf3", fg: "#067647", da: "Publiceret" },
+};
+
+export function docStageMeta(s: string): DocStageMeta {
+  return (DOC_STAGE_META as Record<string, DocStageMeta>)[s] ?? { dot: "#98a2b3", bg: "#f2f4f7", fg: "#667085", da: s };
+}
+
+const STAGE_ROW_META: Record<string, { dot: string; fg: string }> = {
+  "Not started": { dot: "#98a2b3", fg: "#667085" },
+  Drafting: { dot: "#f79009", fg: "#b54708" },
+  "In review": { dot: "#2e90fa", fg: "#175cd3" },
+  Approved: { dot: "#7a5af8", fg: "#5925dc" },
+  Published: { dot: "#12b76a", fg: "#067647" },
+};
+
+export function stageRowMeta(s: string): { dot: string; fg: string } {
+  return STAGE_ROW_META[s] ?? { dot: "#98a2b3", fg: "#667085" };
 }
 
 export interface RoleMeta {

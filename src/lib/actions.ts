@@ -4,7 +4,11 @@ import { redirect } from "next/navigation";
 import { getSession, clearSession, setSession } from "./session";
 import {
   addActivityEvidence,
+  addDocument,
+  publishDocument,
   removeActivityEvidence,
+  reopenDocument,
+  sendDocumentToReview,
   setActivityEffort,
   setActivityOwner,
   setActivityPhase,
@@ -12,10 +16,17 @@ import {
   setActivityStatus,
   setActivityTarget,
   setAdvisorNote,
+  setDocumentApprover,
+  setDocumentBody,
+  setDocumentOwner,
+  setDocumentReview,
+  setDocumentStage,
+  setDocumentTitle,
   setEstDateOverride,
+  signDocument,
 } from "./data/store";
 import { isoDateToDk, monthInputValueToEst, nextStatus, normalizeUrl } from "./domain";
-import type { ActivityStatus, Effort, Phase, Priority } from "./data/types";
+import type { ActivityStatus, DocLifecycleStage, Effort, Phase, Priority } from "./data/types";
 
 async function requireTenantId(): Promise<string> {
   const session = await getSession();
@@ -133,4 +144,63 @@ export async function removeActivityEvidenceAction(ref: string, index: number): 
 export async function setAdvisorNoteAction(ref: string, note: string): Promise<void> {
   const tenantId = await requireTenantId();
   setAdvisorNote(tenantId, ref, note);
+}
+
+export async function setDocumentTitleAction(num: number, title: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setDocumentTitle(tenantId, num, title);
+}
+
+export async function setDocumentOwnerAction(num: number, owner: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setDocumentOwner(tenantId, num, owner);
+}
+
+export async function setDocumentApproverAction(num: number, approver: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setDocumentApprover(tenantId, num, approver);
+}
+
+export async function setDocumentReviewAction(num: number, review: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setDocumentReview(tenantId, num, review);
+}
+
+export async function setDocumentBodyAction(num: number, body: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setDocumentBody(tenantId, num, body);
+}
+
+export async function setDocumentStageAction(num: number, stage: DocLifecycleStage): Promise<void> {
+  const tenantId = await requireTenantId();
+  setDocumentStage(tenantId, num, stage);
+}
+
+export async function sendDocumentToReviewAction(num: number): Promise<void> {
+  const tenantId = await requireTenantId();
+  sendDocumentToReview(tenantId, num);
+}
+
+export async function signDocumentAction(num: number, kind: "review" | "approve", name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const tenantId = await requireTenantId();
+  signDocument(tenantId, num, kind, trimmed);
+}
+
+export async function publishDocumentAction(num: number): Promise<void> {
+  const tenantId = await requireTenantId();
+  publishDocument(tenantId, num);
+}
+
+export async function reopenDocumentAction(num: number): Promise<void> {
+  const tenantId = await requireTenantId();
+  reopenDocument(tenantId, num);
+}
+
+/** Creates a blank controlled document and opens it in the register, matching the design's addDocRow(). */
+export async function addDocumentAction(): Promise<void> {
+  const tenantId = await requireTenantId();
+  const num = addDocument(tenantId);
+  redirect(`/docs?tab=register&sel=${num}`);
 }
