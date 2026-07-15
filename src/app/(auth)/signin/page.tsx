@@ -85,13 +85,13 @@ export default function SignInPage() {
       <div className="absolute top-[22px] right-[26px] z-10 flex items-center bg-ck-ink rounded-full p-0.5">
         <button
           onClick={() => setLang("da")}
-          className={`text-[11px] font-semibold px-3 py-1 rounded-full ${lang === "da" ? "bg-white text-ck-ink" : "text-[#8a93a3]"}`}
+          className={`relative text-[11px] font-semibold px-3 py-1 rounded-full before:content-[''] before:absolute before:-top-2.5 before:-bottom-2.5 before:-left-2 before:right-0 ${lang === "da" ? "bg-white text-ck-ink" : "text-[#8a93a3]"}`}
         >
           DA
         </button>
         <button
           onClick={() => setLang("en")}
-          className={`text-[11px] font-semibold px-3 py-1 rounded-full ${lang === "en" ? "bg-white text-ck-ink" : "text-[#8a93a3]"}`}
+          className={`relative text-[11px] font-semibold px-3 py-1 rounded-full before:content-[''] before:absolute before:-top-2.5 before:-bottom-2.5 before:-right-2 before:left-0 ${lang === "en" ? "bg-white text-ck-ink" : "text-[#8a93a3]"}`}
         >
           EN
         </button>
