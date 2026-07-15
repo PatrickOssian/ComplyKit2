@@ -281,3 +281,12 @@ export function nextDueFromCadence(cadence: string, from: Date): string {
   const d = new Date(from.getFullYear(), from.getMonth() + n, from.getDate());
   return formatDkDate(d);
 }
+
+export const CADS = ["Monthly", "Quarterly", "Semi-annual", "Annual"];
+
+export function cadenceColor(cadence: string): string {
+  if (/Month/i.test(cadence)) return "#b54708";
+  if (/Quarter/i.test(cadence)) return "#3538cd";
+  if (/Semi/i.test(cadence)) return "#7a5af8";
+  return "#0e9384";
+}

@@ -6,6 +6,7 @@ import {
   addActivityEvidence,
   addDocument,
   addPolicySection,
+  completeRecurring,
   publishDocument,
   publishPolicy,
   removeActivityEvidence,
@@ -32,8 +33,11 @@ import {
   setPolicyOwner,
   setPolicySectionBody,
   setPolicySectionTitle,
+  setRecurringCadence,
+  setRecurringFormField,
   signDocument,
   signPolicy,
+  toggleRecurringChecklistItem,
 } from "./data/store";
 import { isoDateToDk, monthInputValueToEst, nextStatus, normalizeUrl } from "./domain";
 import type { ActivityStatus, DocLifecycleStage, Effort, Phase, Priority } from "./data/types";
@@ -270,4 +274,24 @@ export async function publishPolicyAction(): Promise<void> {
 export async function reopenPolicyAction(): Promise<void> {
   const tenantId = await requireTenantId();
   reopenPolicy(tenantId);
+}
+
+export async function setRecurringCadenceAction(control: string, cadence: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setRecurringCadence(tenantId, control, cadence);
+}
+
+export async function setRecurringFormFieldAction(control: string, key: string, value: unknown): Promise<void> {
+  const tenantId = await requireTenantId();
+  setRecurringFormField(tenantId, control, key, value);
+}
+
+export async function toggleRecurringChecklistItemAction(control: string, fieldKey: string, idx: number): Promise<void> {
+  const tenantId = await requireTenantId();
+  toggleRecurringChecklistItem(tenantId, control, fieldKey, idx);
+}
+
+export async function completeRecurringAction(control: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  completeRecurring(tenantId, control);
 }

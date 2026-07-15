@@ -37,7 +37,7 @@ import {
   signedRecords as seedSignedRecords,
   tenants,
 } from "./seed";
-import { bumpVersion, formatDkDate, formatDkDateTime } from "../domain";
+import { bumpVersion, formatDkDate, formatDkDateTime, nextDueFromCadence } from "../domain";
 
 export interface PolicySignature {
   name: string;
@@ -415,4 +415,38 @@ export function publishPolicy(tenantId: string): void {
 export function reopenPolicy(tenantId: string): void {
   const bucket = getBucket(tenantId);
   bucket.policyState = { ...bucket.policyState, stage: "Kladde", reviewSig: null, approveSig: null };
+}
+
+export function setRecurringCadence(tenantId: string, control: string, cadence: string): void {
+  const bucket = getBucket(tenantId);
+  bucket.recurringControls = bucket.recurringControls.map((r) => (r.control === control ? { ...r, cadence } : r));
+}
+
+export function setRecurringFormField(tenantId: string, control: string, key: string, value: unknown): void {
+  const bucket = getBucket(tenantId);
+  bucket.recurringControls = bucket.recurringControls.map((r) =>
+    r.control === control ? { ...r, form: { ...(r.form ?? {}), [key]: value } } : r,
+  );
+}
+
+export function toggleRecurringChecklistItem(tenantId: string, control: string, fieldKey: string, idx: number): void {
+  const bucket = getBucket(tenantId);
+  bucket.recurringControls = bucket.recurringControls.map((r) => {
+    if (r.control !== control) return r;
+    const cur = { ...((r.form?.[fieldKey] as Record<number, boolean>) ?? {}) };
+    cur[idx] = !cur[idx];
+    return { ...r, form: { ...(r.form ?? {}), [fieldKey]: cur } };
+  });
+}
+
+export function completeRecurring(tenantId: string, control: string): void {
+  const bucket = getBucket(tenantId);
+  const r = bucket.recurringControls.find((x) => x.control === control);
+  if (!r || !r.form || !r.form.outcome) return;
+  const today = formatDkDate(new Date());
+  const next = nextDueFromCadence(r.cadence, new Date());
+  const entry = { when: today, outcome: String(r.form.outcome), form: r.form };
+  bucket.recurringControls = bucket.recurringControls.map((x) =>
+    x.control === control ? { ...x, lastDone: today, next, history: [entry, ...(x.history ?? [])] } : x,
+  );
 }
