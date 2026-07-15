@@ -126,7 +126,7 @@ export default function SignInPage() {
 
       <div className="flex-1 min-w-0 bg-white flex flex-col justify-center px-14 py-12">
         <div className="w-full max-w-[400px] mx-auto">
-          <div className="text-[28px] font-semibold text-ck-ink tracking-tight">{t.formTitle}</div>
+          <h1 className="text-[28px] font-semibold text-ck-ink tracking-tight m-0">{t.formTitle}</h1>
           <div className="text-sm text-ck-muted mt-1.5 mb-6.5">{t.formSub}</div>
 
           <div

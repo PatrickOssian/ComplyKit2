@@ -12,7 +12,7 @@ export function AppHeader({ title, subtitle, gxpOn, advisor }: AppHeaderProps) {
   return (
     <div className="flex items-center gap-4 px-7 py-3.5 bg-white border-b border-ck-border shrink-0">
       <div>
-        <div className="text-lg font-semibold text-ck-ink tracking-tight">{title}</div>
+        <h1 className="text-lg font-semibold text-ck-ink tracking-tight m-0">{title}</h1>
         <div className="text-xs text-ck-muted mt-0.5">{subtitle}</div>
       </div>
       <div className="ml-auto flex items-center gap-3">

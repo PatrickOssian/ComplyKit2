@@ -20,7 +20,7 @@ export default async function WorkspacePage() {
           </div>
           <div className="font-semibold text-base text-ck-ink tracking-tight">ComplyKit</div>
         </div>
-        <div className="text-xl font-semibold text-ck-ink tracking-tight">Vælg en workspace</div>
+        <h1 className="text-xl font-semibold text-ck-ink tracking-tight m-0">Vælg en workspace</h1>
 
         {session.advisorMode && (
           <div className="flex items-center gap-2.5 bg-ck-amber-bg border border-ck-amber-border rounded-xl px-3.5 py-2.5 mt-3 mb-1.5">
