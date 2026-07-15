@@ -55,6 +55,8 @@ export interface TenantBucket {
   auditLog: AuditEvent[];
   pendingSignatures: PendingSignature[];
   signedRecords: SignedRecord[];
+  /** Manual override for the dashboard's estimated audit-ready month (e.g. "jul 2026"). */
+  estDateOverride: string | null;
 }
 
 function seedDocument(doc: ControlledDocument): ControlledDocument {
@@ -102,6 +104,7 @@ function createBucket(): TenantBucket {
     auditLog: seedAuditLog.map((e) => ({ ...e })),
     pendingSignatures: seedPendingSignatures.map((p) => ({ ...p })),
     signedRecords: seedSignedRecords.map((s) => ({ ...s })),
+    estDateOverride: null,
   };
 }
 
@@ -130,4 +133,9 @@ export function getBucket(tenantId: string): TenantBucket {
 export function appendAuditEvent(tenantId: string, event: AuditEvent): void {
   const bucket = getBucket(tenantId);
   bucket.auditLog = [event, ...bucket.auditLog];
+}
+
+export function setEstDateOverride(tenantId: string, value: string | null): void {
+  const bucket = getBucket(tenantId);
+  bucket.estDateOverride = value;
 }

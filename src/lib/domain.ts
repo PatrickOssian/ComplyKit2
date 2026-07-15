@@ -2,7 +2,7 @@
 // tokens, readiness scoring, date/hash formatting helpers). No React, no
 // data fetching — safe to import from server or client code.
 
-import type { Activity, ControlledDocument, Priority, RoleName } from "./data/types";
+import type { Activity, ActivityStatus, ControlledDocument, Priority, RoleName } from "./data/types";
 
 export const ROLES: RoleName[] = ["Admin", "Editor", "Auditor", "Viewer"];
 
@@ -79,10 +79,73 @@ export function isDocDone(d: ControlledDocument): boolean {
   return d.docStage === "Published" || d.docStage === "Approved";
 }
 
+export interface StatusMeta {
+  dot: string;
+  bg: string;
+  fg: string;
+}
+
+const STATUS_META: Record<ActivityStatus, StatusMeta> = {
+  "Not started": { dot: "#98a2b3", bg: "#f2f4f7", fg: "#667085" },
+  "In progress": { dot: "#f79009", bg: "#fffaeb", fg: "#b54708" },
+  Implemented: { dot: "#12b76a", bg: "#ecfdf3", fg: "#067647" },
+  "Approved plan": { dot: "#2e90fa", bg: "#eff8ff", fg: "#175cd3" },
+  Deferred: { dot: "#7a5af8", bg: "#f4f3ff", fg: "#5925dc" },
+  "N/A": { dot: "#d0d5dd", bg: "#f9fafb", fg: "#98a2b3" },
+};
+
+export function statusMeta(s: ActivityStatus): StatusMeta {
+  return STATUS_META[s] ?? { dot: "#98a2b3", bg: "#f2f4f7", fg: "#667085" };
+}
+
 const DK_MO = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 
 export function formatDkDate(d: Date): string {
   return `${d.getDate()} ${DK_MO[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** Parses ComplyKit's Danish "15 jul 2026" date strings back into a Date. */
+export function parseDkDate(str: string | undefined | null): Date | null {
+  if (!str) return null;
+  const m = String(str).trim().match(/^(\d{1,2})\s+([a-zæøå]+)\s+(\d{4})$/i);
+  if (!m) return null;
+  const mi = DK_MO.indexOf(m[2].toLowerCase().slice(0, 3));
+  if (mi < 0) return null;
+  return new Date(Number(m[3]), mi, Number(m[1]));
+}
+
+export function todayDate(): Date {
+  const t = new Date();
+  return new Date(t.getFullYear(), t.getMonth(), t.getDate());
+}
+
+export function isOverdue(a: Activity): boolean {
+  if (isDone(a)) return false;
+  const d = parseDkDate(a.target);
+  return !!d && d < todayDate();
+}
+
+/** Estimated audit-ready month: validFrom + 12 months, or the tenant's manual override. */
+export function estAuditReady(validFrom: string, override: string | null): string {
+  if (override) return override;
+  const base = parseDkDate(validFrom) ?? todayDate();
+  const d = new Date(base.getFullYear(), base.getMonth() + 12, 1);
+  return `${DK_MO[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** Converts an "jul 2026"-style display string to a <input type="month"> value. */
+export function estToMonthInputValue(estDate: string): string {
+  const [mon, yr] = estDate.split(" ");
+  const mi = DK_MO.indexOf(mon);
+  const year = parseInt(yr, 10);
+  if (mi < 0 || !year) return "";
+  return `${year}-${String(mi + 1).padStart(2, "0")}`;
+}
+
+/** Converts an <input type="month"> value ("2026-07") back to "jul 2026". */
+export function monthInputValueToEst(value: string): string {
+  const [yr, mo] = value.split("-");
+  return `${DK_MO[parseInt(mo, 10) - 1]} ${yr}`;
 }
 
 export function formatDkDateTime(d: Date): string {

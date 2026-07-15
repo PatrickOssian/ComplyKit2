@@ -2,6 +2,8 @@
 
 import { redirect } from "next/navigation";
 import { getSession, clearSession, setSession } from "./session";
+import { setEstDateOverride } from "./data/store";
+import { monthInputValueToEst } from "./domain";
 
 /** Mock sign-in — no real credential check yet, mirrors the design's signIn(). */
 export async function signInAction(): Promise<void> {
@@ -50,4 +52,11 @@ export async function toggleGxpAction(): Promise<void> {
   const session = await getSession();
   if (!session) redirect("/signin");
   await setSession({ ...session, gxp: !session.gxp });
+}
+
+/** Sets or clears the dashboard's manual estimated-audit-ready-month override. */
+export async function updateEstDateAction(monthValue: string): Promise<void> {
+  const session = await getSession();
+  if (!session?.tenantId) redirect("/signin");
+  setEstDateOverride(session.tenantId, monthValue ? monthInputValueToEst(monthValue) : null);
 }
