@@ -1,5 +1,9 @@
 NEXTJS_ENV=development
 
-# Uncomment and fill in once Neon Postgres + real auth are wired up:
-# DATABASE_URL="postgres://..."
-# AUTH_SECRET="..."
+# Neon Postgres connection string (pooled endpoint).
+DATABASE_URL="postgres://..."
+# Random secret used to sign Better Auth session tokens — generate with
+# `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
+AUTH_SECRET="..."
+# Base URL Better Auth uses to build callback/redirect links.
+BETTER_AUTH_URL="http://localhost:3000"
