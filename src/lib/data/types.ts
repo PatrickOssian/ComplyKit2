@@ -18,7 +18,7 @@ export type DocLifecycleStage =
   | "In review"
   | "Approved"
   | "Published";
-export type PolicyStage = "Kladde" | "Til review" | "Godkendt" | "Udgivet";
+export type PolicyStage = "Kladde" | "I review" | "Godkendt" | "Publiceret";
 export type RoleName = "Admin" | "Editor" | "Auditor" | "Viewer" | "Advisor";
 
 export interface Tag {

@@ -5,10 +5,15 @@ import { getSession, clearSession, setSession } from "./session";
 import {
   addActivityEvidence,
   addDocument,
+  addPolicySection,
   publishDocument,
+  publishPolicy,
   removeActivityEvidence,
+  removePolicySection,
   reopenDocument,
+  reopenPolicy,
   sendDocumentToReview,
+  sendPolicyToReview,
   setActivityEffort,
   setActivityOwner,
   setActivityPhase,
@@ -23,7 +28,12 @@ import {
   setDocumentStage,
   setDocumentTitle,
   setEstDateOverride,
+  setPolicyBumpKind,
+  setPolicyOwner,
+  setPolicySectionBody,
+  setPolicySectionTitle,
   signDocument,
+  signPolicy,
 } from "./data/store";
 import { isoDateToDk, monthInputValueToEst, nextStatus, normalizeUrl } from "./domain";
 import type { ActivityStatus, DocLifecycleStage, Effort, Phase, Priority } from "./data/types";
@@ -203,4 +213,61 @@ export async function addDocumentAction(): Promise<void> {
   const tenantId = await requireTenantId();
   const num = addDocument(tenantId);
   redirect(`/docs?tab=register&sel=${num}`);
+}
+
+export async function setPolicySectionBodyAction(num: number, text: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setPolicySectionBody(tenantId, num, text);
+}
+
+export async function setPolicySectionTitleAction(num: number, title: string, custom: boolean): Promise<void> {
+  const tenantId = await requireTenantId();
+  setPolicySectionTitle(tenantId, num, title, custom);
+}
+
+/** Adds a custom policy section and opens it, matching the design's confirmAddPolicy(). */
+export async function addPolicySectionAction(title: string): Promise<void> {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+  const tenantId = await requireTenantId();
+  const num = addPolicySection(tenantId, trimmed);
+  redirect(`/policy?sel=${num}`);
+}
+
+export async function removePolicySectionAction(num: number): Promise<void> {
+  const tenantId = await requireTenantId();
+  removePolicySection(tenantId, num);
+  redirect("/policy?sel=1");
+}
+
+export async function setPolicyOwnerAction(owner: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  setPolicyOwner(tenantId, owner);
+}
+
+export async function setPolicyBumpKindAction(kind: "minor" | "major"): Promise<void> {
+  const tenantId = await requireTenantId();
+  setPolicyBumpKind(tenantId, kind);
+}
+
+export async function sendPolicyToReviewAction(): Promise<void> {
+  const tenantId = await requireTenantId();
+  sendPolicyToReview(tenantId);
+}
+
+export async function signPolicyAction(kind: "review" | "approve", name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const tenantId = await requireTenantId();
+  signPolicy(tenantId, kind, trimmed);
+}
+
+export async function publishPolicyAction(): Promise<void> {
+  const tenantId = await requireTenantId();
+  publishPolicy(tenantId);
+}
+
+export async function reopenPolicyAction(): Promise<void> {
+  const tenantId = await requireTenantId();
+  reopenPolicy(tenantId);
 }

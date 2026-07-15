@@ -39,21 +39,40 @@ import {
 } from "./seed";
 import { bumpVersion, formatDkDate, formatDkDateTime } from "../domain";
 
+export interface PolicySignature {
+  name: string;
+  when: string;
+}
+
+export interface PolicyHistoryEntry {
+  version: string;
+  validFrom: string;
+  approvedBy: string;
+  when: string;
+}
+
 export interface PolicyState {
   stage: PolicyStage;
   version: string;
   publishedVersion: string | null;
   validFrom: string | null;
   owner: string;
-  reviewSig: null | { name: string; role: "Reviewer"; meaning: string; when: string };
-  approveSig: null | { name: string; role: "Approver"; meaning: string; when: string };
+  reviewSig: PolicySignature | null;
+  approveSig: PolicySignature | null;
   bumpKind: "minor" | "major";
+  history: PolicyHistoryEntry[];
 }
 
 export interface TenantBucket {
   activities: Activity[];
   documents: ControlledDocument[];
   policySections: PolicySection[];
+  /** User-added custom policy sections (beyond the 28 seed sections). */
+  policyCustomSections: PolicySection[];
+  /** Draft body-text overrides per section num, split on blank lines like the seed body[] arrays. */
+  policyEdits: Record<number, string>;
+  /** Title overrides for built-in (non-custom) policy sections. */
+  policyTitleEdits: Record<number, string>;
   policyState: PolicyState;
   recurringControls: RecurringControl[];
   members: Member[];
@@ -96,6 +115,9 @@ function createBucket(): TenantBucket {
     activities: seedActivities.map((a) => ({ ...a })),
     documents: seedDocuments.map((d) => seedDocument({ ...d })),
     policySections: seedPolicySections.map((p) => ({ ...p })),
+    policyCustomSections: [],
+    policyEdits: {},
+    policyTitleEdits: {},
     policyState: {
       stage: "Kladde",
       version: seedPolicyMeta.policyVersion || "0.2",
@@ -105,6 +127,7 @@ function createBucket(): TenantBucket {
       reviewSig: null,
       approveSig: null,
       bumpKind: "minor",
+      history: [],
     },
     recurringControls: seedRecurringControls.map((r) => ({ ...r, history: [], form: {} })),
     members: seedMembers.map((m) => ({ ...m })),
@@ -300,4 +323,96 @@ export function addDocument(tenantId: string): number {
   };
   bucket.documents = [...bucket.documents, doc];
   return num;
+}
+
+export function getAllPolicySections(tenantId: string): PolicySection[] {
+  const bucket = getBucket(tenantId);
+  return [...bucket.policySections, ...bucket.policyCustomSections];
+}
+
+export function setPolicySectionBody(tenantId: string, num: number, text: string): void {
+  const bucket = getBucket(tenantId);
+  bucket.policyEdits = { ...bucket.policyEdits, [num]: text };
+}
+
+export function setPolicySectionTitle(tenantId: string, num: number, title: string, custom: boolean): void {
+  const bucket = getBucket(tenantId);
+  if (custom) {
+    bucket.policyCustomSections = bucket.policyCustomSections.map((s) => (s.num === num ? { ...s, title } : s));
+  } else {
+    bucket.policyTitleEdits = { ...bucket.policyTitleEdits, [num]: title };
+  }
+}
+
+export function addPolicySection(tenantId: string, title: string): number {
+  const bucket = getBucket(tenantId);
+  const nums = [...bucket.policySections, ...bucket.policyCustomSections].map((s) => s.num);
+  const num = nums.length ? Math.max(...nums) + 1 : 1;
+  bucket.policyCustomSections = [...bucket.policyCustomSections, { num, title, body: [], gxp: false, custom: true }];
+  return num;
+}
+
+export function removePolicySection(tenantId: string, num: number): void {
+  const bucket = getBucket(tenantId);
+  bucket.policyCustomSections = bucket.policyCustomSections.filter((s) => s.num !== num);
+  const edits = { ...bucket.policyEdits };
+  delete edits[num];
+  bucket.policyEdits = edits;
+}
+
+export function setPolicyOwner(tenantId: string, owner: string): void {
+  const bucket = getBucket(tenantId);
+  bucket.policyState = { ...bucket.policyState, owner };
+}
+
+export function setPolicyBumpKind(tenantId: string, bumpKind: "minor" | "major"): void {
+  const bucket = getBucket(tenantId);
+  bucket.policyState = { ...bucket.policyState, bumpKind };
+}
+
+export function sendPolicyToReview(tenantId: string): void {
+  const bucket = getBucket(tenantId);
+  bucket.policyState = { ...bucket.policyState, stage: "I review" };
+}
+
+export function signPolicy(tenantId: string, kind: "review" | "approve", name: string): void {
+  const bucket = getBucket(tenantId);
+  const when = formatDkDateTime(new Date());
+  if (kind === "review") {
+    bucket.policyState = { ...bucket.policyState, reviewSig: { name, when } };
+  } else {
+    bucket.policyState = { ...bucket.policyState, approveSig: { name, when }, stage: "Godkendt" };
+  }
+}
+
+export function publishPolicy(tenantId: string): void {
+  const bucket = getBucket(tenantId);
+  const p = bucket.policyState;
+  const today = formatDkDate(new Date());
+  let version: string;
+  if (!p.publishedVersion) {
+    version = "1.0";
+  } else {
+    const [majStr, minStr] = p.publishedVersion.split(".");
+    const maj = parseInt(majStr, 10) || 1;
+    const min = parseInt(minStr, 10) || 0;
+    version = p.bumpKind === "major" ? `${maj + 1}.0` : `${maj}.${min + 1}`;
+  }
+  bucket.policyState = {
+    ...p,
+    version,
+    publishedVersion: version,
+    validFrom: today,
+    stage: "Publiceret",
+    bumpKind: "minor",
+    history: [
+      { version, validFrom: today, approvedBy: p.approveSig?.name ?? "—", when: formatDkDateTime(new Date()) },
+      ...p.history,
+    ],
+  };
+}
+
+export function reopenPolicy(tenantId: string): void {
+  const bucket = getBucket(tenantId);
+  bucket.policyState = { ...bucket.policyState, stage: "Kladde", reviewSig: null, approveSig: null };
 }
