@@ -31,7 +31,7 @@ export default async function SettingsPage() {
           <GxpToggleRow gxpOn={session.gxp} />
         </div>
 
-        {user.role === "Admin" && (
+        {(user.role === "Admin" || session.advisorMode) && (
           <NavSectionsToggle items={toggleableNavItems} hiddenSections={bucket.hiddenNavSections} />
         )}
 

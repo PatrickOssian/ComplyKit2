@@ -67,16 +67,23 @@ async function requireUser(): Promise<{ id: string; name: string }> {
   return authUser;
 }
 
-/** Server-side enforcement that the caller is Admin at this tenant — the
- * settings UI already hides admin-only controls from other roles, but that's
- * cosmetic; this is the real gate. */
-async function requireAdmin(tenantId: string): Promise<void> {
+/** Server-side enforcement that the caller can manage this tenant's
+ * workspace settings — the local Admin, or the Stage One advisor browsing
+ * with cross-tenant rights. `advisorMode` is checked first because a
+ * membership-derived role only resolves to "Advisor" at tenants the advisor
+ * has a real row for (today, only "np") — everywhere else it falls back to
+ * that tenant's static seed role, so keying purely on role would miss the
+ * advisor at every other client site. The settings UI already hides this
+ * control from ineligible roles, but that's cosmetic; this is the real gate. */
+async function requireCanManageNavSections(tenantId: string): Promise<void> {
+  const workspace = await getWorkspace();
+  if (workspace.advisorMode) return;
   const user = await requireUser();
   const membership = await getMembership(user.id, tenantId);
   const tenant = await getTenant(tenantId);
   const role = membership?.role ?? tenant?.role;
   if (role !== "Admin") {
-    throw new Error("Kun Admin kan ændre synlige sektioner.");
+    throw new Error("Kun Admin eller rådgiver kan ændre synlige sektioner.");
   }
 }
 
@@ -127,7 +134,7 @@ export async function toggleGxpAction(): Promise<void> {
  * every member of this tenant. Cosmetic — never touches the underlying data. */
 export async function toggleNavSectionAction(key: string): Promise<void> {
   const tenantId = await requireTenantId();
-  await requireAdmin(tenantId);
+  await requireCanManageNavSections(tenantId);
   await toggleNavSectionHidden(tenantId, key);
 }
 
