@@ -20,6 +20,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         apPct={apPct}
         pendingCount={bucket.pendingSignatures.length}
         user={user}
+        hiddenNavSections={bucket.hiddenNavSections}
       />
       <div className="flex-1 flex flex-col min-w-0">{children}</div>
     </div>

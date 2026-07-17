@@ -1,0 +1,1 @@
+ALTER TABLE "tenant_settings" ADD COLUMN "hidden_nav" jsonb DEFAULT '[]'::jsonb NOT NULL;

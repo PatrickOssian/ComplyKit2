@@ -1,9 +1,12 @@
 import { GxpToggleRow } from "@/components/settings/GxpToggleRow";
+import { NavSectionsToggle } from "@/components/settings/NavSectionsToggle";
 import { PageShell } from "@/components/shell/PageShell";
 import { requireAppContext } from "@/lib/app-context";
+import { navItems } from "@/lib/data/seed";
 
 export default async function SettingsPage() {
-  const { session, advisor, tenant } = await requireAppContext();
+  const { session, advisor, tenant, bucket, user } = await requireAppContext();
+  const toggleableNavItems = navItems.filter((n) => n.v !== "overview");
 
   return (
     <PageShell title="Indstillinger" subtitle="Workspace-indstillinger og sikkerhed" gxpOn={session.gxp} advisor={advisor}>
@@ -27,6 +30,10 @@ export default async function SettingsPage() {
           </div>
           <GxpToggleRow gxpOn={session.gxp} />
         </div>
+
+        {user.role === "Admin" && (
+          <NavSectionsToggle items={toggleableNavItems} hiddenSections={bucket.hiddenNavSections} />
+        )}
 
         <div className="bg-white border border-ck-border rounded-xl px-5 py-4.5 mb-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
           <div className="text-[13px] font-semibold text-ck-ink mb-1.5">Security</div>

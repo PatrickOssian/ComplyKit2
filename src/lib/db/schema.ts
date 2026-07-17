@@ -37,6 +37,10 @@ export const tenantSettings = pgTable("tenant_settings", {
   estDateOverride: text("est_date_override"),
   billingPlanKey: text("billing_plan_key").notNull().default("compliance"),
   advNotes: jsonb("adv_notes").notNull().default({}),
+  /** Workspace nav keys (matches NavDef.v, e.g. "roadmap", "standards") an
+   * Admin has hidden from the side rail for this tenant. Cosmetic only —
+   * hides the nav link, doesn't block direct navigation to the route. */
+  hiddenNav: jsonb("hidden_nav").notNull().default([]),
 });
 
 export const activities = pgTable(

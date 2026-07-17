@@ -77,6 +77,8 @@ export interface TenantBucket {
   estDateOverride: string | null;
   advNotes: Record<string, string>;
   plan: "essentials" | "compliance" | "gxp";
+  /** Workspace nav keys (NavDef.v) an Admin has hidden from the side rail. */
+  hiddenNavSections: string[];
 }
 
 export interface Membership {
@@ -286,6 +288,7 @@ export async function getBucket(tenantId: string): Promise<TenantBucket> {
     estDateOverride: settings?.estDateOverride ?? null,
     advNotes: (settings?.advNotes as Record<string, string>) ?? {},
     plan: (settings?.billingPlanKey as TenantBucket["plan"]) ?? "compliance",
+    hiddenNavSections: (settings?.hiddenNav as string[]) ?? [],
   };
 }
 
@@ -700,6 +703,20 @@ export async function setMemberRole(tenantId: string, email: string, role: RoleN
 export async function setBillingPlan(tenantId: string, plan: "essentials" | "compliance" | "gxp"): Promise<void> {
   const db = getDb();
   await db.update(schema.tenantSettings).set({ billingPlanKey: plan }).where(eq(schema.tenantSettings.tenantId, tenantId));
+}
+
+/** Toggles whether a workspace nav item (NavDef.v, e.g. "roadmap") is hidden
+ * from the side rail for this tenant. Cosmetic only — data underneath is
+ * never touched, and this doesn't block direct navigation to the route. */
+export async function toggleNavSectionHidden(tenantId: string, key: string): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ hiddenNav: schema.tenantSettings.hiddenNav })
+    .from(schema.tenantSettings)
+    .where(eq(schema.tenantSettings.tenantId, tenantId));
+  const current = (rows[0]?.hiddenNav as string[]) ?? [];
+  const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+  await db.update(schema.tenantSettings).set({ hiddenNav: next }).where(eq(schema.tenantSettings.tenantId, tenantId));
 }
 
 export async function signPendingDocument(tenantId: string, actorName: string, id: string, meaning: string): Promise<void> {

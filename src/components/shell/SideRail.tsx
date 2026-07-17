@@ -32,9 +32,19 @@ interface SideRailProps {
   apPct: number;
   pendingCount: number;
   user: { name: string; email: string; init: string };
+  hiddenNavSections: string[];
 }
 
-export function SideRail({ tenant, tenants, advisorMode, gxpOn, apPct, pendingCount, user }: SideRailProps) {
+export function SideRail({
+  tenant,
+  tenants,
+  advisorMode,
+  gxpOn,
+  apPct,
+  pendingCount,
+  user,
+  hiddenNavSections,
+}: SideRailProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
@@ -127,7 +137,7 @@ export function SideRail({ tenant, tenants, advisorMode, gxpOn, apPct, pendingCo
 
       <div className="text-[9.5px] text-[#667085] uppercase tracking-wide px-2 -mb-2">Workspace</div>
       <nav className="flex flex-col gap-0.5 text-[12.5px]">
-        {navItems.map((n) => {
+        {navItems.filter((n) => n.v === "overview" || !hiddenNavSections.includes(n.v)).map((n) => {
           const active = pathname.startsWith(VIEW_ROUTES[n.v]);
           return (
             <Link

@@ -10,6 +10,7 @@ import {
   addPolicySection,
   completeRecurring,
   getMembership,
+  getTenant,
   inviteMember,
   publishDocument,
   publishPolicy,
@@ -45,6 +46,7 @@ import {
   signDocument,
   signPendingDocument,
   signPolicy,
+  toggleNavSectionHidden,
   toggleRecurringChecklistItem,
 } from "./data/store";
 import { isoDateToDk, monthInputValueToEst, nextStatus, normalizeUrl } from "./domain";
@@ -63,6 +65,19 @@ async function requireUser(): Promise<{ id: string; name: string }> {
   const authUser = await getAuthUser();
   if (!authUser) redirect("/signin");
   return authUser;
+}
+
+/** Server-side enforcement that the caller is Admin at this tenant — the
+ * settings UI already hides admin-only controls from other roles, but that's
+ * cosmetic; this is the real gate. */
+async function requireAdmin(tenantId: string): Promise<void> {
+  const user = await requireUser();
+  const membership = await getMembership(user.id, tenantId);
+  const tenant = await getTenant(tenantId);
+  const role = membership?.role ?? tenant?.role;
+  if (role !== "Admin") {
+    throw new Error("Kun Admin kan ændre synlige sektioner.");
+  }
 }
 
 export async function signOutAction(): Promise<void> {
@@ -106,6 +121,14 @@ export async function toggleGxpAction(): Promise<void> {
   if (!authUser) redirect("/signin");
   const workspace = await getWorkspace();
   await setWorkspace({ ...workspace, gxp: !workspace.gxp });
+}
+
+/** Admin-only: shows/hides a workspace nav section (e.g. "roadmap") for
+ * every member of this tenant. Cosmetic — never touches the underlying data. */
+export async function toggleNavSectionAction(key: string): Promise<void> {
+  const tenantId = await requireTenantId();
+  await requireAdmin(tenantId);
+  await toggleNavSectionHidden(tenantId, key);
 }
 
 /** Sets or clears the dashboard's manual estimated-audit-ready-month override. */
