@@ -38,6 +38,9 @@ export async function requireAppContext(): Promise<AppContext> {
 
   const tenant = await getTenant(workspace.tenantId);
   if (!tenant) redirect("/workspace");
+  // Archived tenants block login for their users without deleting any
+  // underlying data — the audit trail stays intact, only access stops.
+  if (tenant.status === "archived") redirect("/workspace");
 
   const membership = await getMembership(authUser.id, workspace.tenantId);
   const role = membership?.role ?? tenant.role;
