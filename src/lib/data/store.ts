@@ -6,9 +6,11 @@
 // fresh client per call) rather than a module-level singleton, per the
 // Cloudflare Workers "no global DB client" constraint.
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
+import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "../db/client";
 import * as schema from "../db/schema";
+import { seedTenantData } from "./seed-tenant";
 import type {
   Activity,
   ActivityStatus,
@@ -20,6 +22,7 @@ import type {
   Member,
   PendingSignature,
   Phase,
+  PlatformAccess,
   PolicySection,
   PolicyStage,
   Priority,
@@ -27,6 +30,8 @@ import type {
   RoleName,
   SignedRecord,
   Tenant,
+  TenantInvite,
+  TenantInviteStatus,
   TenantStatus,
 } from "./types";
 import { auditStamp, bumpVersion, formatDkDate, formatDkDateTime, nextDueFromCadence, rndHash } from "../domain";
@@ -234,12 +239,24 @@ function mapTenant(r: typeof schema.tenants.$inferSelect): Tenant {
     rejectionReason: r.rejectionReason,
     standardsInScope: (r.standardsInScope as string[]) ?? [],
     requestNotes: r.requestNotes,
+    requestedAdminEmail: r.requestedAdminEmail,
   };
 }
 
+/** Tenant-facing picker (workspace switcher, advisor org-switcher dropdown)
+ * — only ever active tenants. A pending/archived/rejected tenant must never
+ * appear as a pickable workspace for anyone outside the Platform Admin
+ * views. Use getAllTenantsForPlatform() for those. */
 export async function getTenants(): Promise<Tenant[]> {
   const db = getDb();
-  const rows = await db.select().from(schema.tenants);
+  const rows = await db.select().from(schema.tenants).where(eq(schema.tenants.status, "active"));
+  return rows.map(mapTenant);
+}
+
+/** Platform Admin overview — every tenant regardless of status. */
+export async function getAllTenantsForPlatform(): Promise<Tenant[]> {
+  const db = getDb();
+  const rows = await db.select().from(schema.tenants).orderBy(desc(schema.tenants.createdAt));
   return rows.map(mapTenant);
 }
 
@@ -258,6 +275,306 @@ export async function getMembership(userId: string, tenantId: string): Promise<M
   const m = rows[0];
   if (!m) return undefined;
   return { role: m.role as RoleName, advisorMode: m.advisorMode };
+}
+
+// ---- v2.1: tenant provisioning & platform admin ----
+
+export async function getPlatformAccess(userId: string): Promise<PlatformAccess> {
+  const db = getDb();
+  const rows = await db.select().from(schema.platformAccess).where(eq(schema.platformAccess.userId, userId));
+  const r = rows[0];
+  return { isPlatformAdmin: r?.isPlatformAdmin ?? false, isAdvisor: r?.isAdvisor ?? false };
+}
+
+function slugifyTenantId(name: string): string {
+  const base = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 30);
+  return base || "tenant";
+}
+
+async function generateUniqueTenantId(name: string): Promise<string> {
+  const db = getDb();
+  const base = slugifyTenantId(name);
+  let candidate = base;
+  let n = 2;
+  // Collision is exceedingly unlikely (org names rarely collide once
+  // slugified), so a sequential check-then-try loop is simple and fine —
+  // this only runs once per tenant creation, not a hot path.
+  while (true) {
+    const existing = await db.select({ id: schema.tenants.id }).from(schema.tenants).where(eq(schema.tenants.id, candidate));
+    if (!existing.length) return candidate;
+    candidate = `${base}-${n}`;
+    n++;
+  }
+}
+
+function deriveShort(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const letters = words
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  return letters || name.slice(0, 2).toUpperCase();
+}
+
+export interface TenantRequestInput {
+  name: string;
+  sector: string;
+  gxp: boolean;
+  standardsInScope: string[];
+  requestNotes: string | null;
+  requestedAdminEmail: string | null;
+}
+
+/** Advisor path: creates a pending_approval tenant. No seed data, no
+ * invite — matches the brief's "nothing is instantiated yet" step 1. */
+export async function createTenantRequest(input: TenantRequestInput, requestedByUserId: string): Promise<string> {
+  const db = getDb();
+  const id = await generateUniqueTenantId(input.name);
+  await db.insert(schema.tenants).values({
+    id,
+    name: input.name,
+    short: deriveShort(input.name),
+    sector: input.sector,
+    role: "Admin",
+    plan: input.gxp ? "GxP Validated" : "Compliance",
+    users: 0,
+    gxp: input.gxp,
+    tint: "#3538cd",
+    status: "pending_approval",
+    requestedBy: requestedByUserId,
+    standardsInScope: input.standardsInScope,
+    requestNotes: input.requestNotes,
+    requestedAdminEmail: input.requestedAdminEmail,
+  });
+  return id;
+}
+
+/** Platform Admin path: creates the tenant already active, seeds it, and
+ * returns an invite token immediately — the "skip the request step"
+ * shortcut from brief §3.5. Caller (platform-actions.ts) is responsible
+ * for requiring requestedAdminEmail before calling this — store.ts stays
+ * pure data-layer, business-rule validation belongs at the action layer. */
+export async function createTenantDirect(
+  input: TenantRequestInput,
+  createdByUserId: string,
+): Promise<{ tenantId: string; inviteToken: string | null }> {
+  const db = getDb();
+  const id = await generateUniqueTenantId(input.name);
+  await db.insert(schema.tenants).values({
+    id,
+    name: input.name,
+    short: deriveShort(input.name),
+    sector: input.sector,
+    role: "Admin",
+    plan: input.gxp ? "GxP Validated" : "Compliance",
+    users: 0,
+    gxp: input.gxp,
+    tint: "#3538cd",
+    status: "active",
+    approvedBy: createdByUserId,
+    approvedAt: new Date(),
+    standardsInScope: input.standardsInScope,
+    requestNotes: input.requestNotes,
+    requestedAdminEmail: input.requestedAdminEmail,
+  });
+  await seedTenantData(id);
+  const inviteToken = input.requestedAdminEmail ? await createTenantInvite(id, input.requestedAdminEmail, "Admin") : null;
+  return { tenantId: id, inviteToken };
+}
+
+export interface TenantApprovalEdits {
+  name?: string;
+  sector?: string;
+  gxp?: boolean;
+  standardsInScope?: string[];
+  requestNotes?: string | null;
+  requestedAdminEmail?: string;
+  /** Danish short-month string (e.g. "jul 2027") — written into
+   * tenant_settings.estDateOverride once seeding creates that row, rather
+   * than duplicating the "target audit-ready date" concept on a second
+   * field (see the v2.1 addendum's data-model note). */
+  targetDateDkString?: string | null;
+}
+
+/** Throws if the tenant isn't a pending request, or if no admin email is
+ * set (by request or by these edits) — approval is blocked until then,
+ * per the brief. Returns the invite token for the new tenant's first admin. */
+export async function approveTenantRequest(
+  tenantId: string,
+  edits: TenantApprovalEdits,
+  approvedByUserId: string,
+): Promise<string> {
+  const db = getDb();
+  const rows = await db.select().from(schema.tenants).where(eq(schema.tenants.id, tenantId));
+  const tenant = rows[0];
+  if (!tenant || tenant.status !== "pending_approval") {
+    throw new Error("Denne tenant er ikke en afventende anmodning.");
+  }
+  const finalEmail = edits.requestedAdminEmail ?? tenant.requestedAdminEmail;
+  if (!finalEmail) {
+    throw new Error("En admin-email skal angives før anmodningen kan godkendes.");
+  }
+
+  await db
+    .update(schema.tenants)
+    .set({
+      name: edits.name ?? tenant.name,
+      sector: edits.sector ?? tenant.sector,
+      gxp: edits.gxp ?? tenant.gxp,
+      standardsInScope: edits.standardsInScope ?? tenant.standardsInScope,
+      requestNotes: edits.requestNotes ?? tenant.requestNotes,
+      requestedAdminEmail: finalEmail,
+      status: "active",
+      approvedBy: approvedByUserId,
+      approvedAt: new Date(),
+    })
+    .where(eq(schema.tenants.id, tenantId));
+
+  await seedTenantData(tenantId);
+
+  if (edits.targetDateDkString) {
+    await db
+      .update(schema.tenantSettings)
+      .set({ estDateOverride: edits.targetDateDkString })
+      .where(eq(schema.tenantSettings.tenantId, tenantId));
+  }
+
+  return createTenantInvite(tenantId, finalEmail, "Admin");
+}
+
+/** Soft-delete via status, not a real delete — matches this app's existing
+ * "never destroy, mark state" principle (the same one behind the
+ * immutable audit log). Row stays queryable under a "rejected" filter. */
+export async function rejectTenantRequest(tenantId: string, reason: string, rejectedByUserId: string): Promise<void> {
+  const db = getDb();
+  await db
+    .update(schema.tenants)
+    .set({ status: "rejected", rejectedBy: rejectedByUserId, rejectedAt: new Date(), rejectionReason: reason })
+    .where(eq(schema.tenants.id, tenantId));
+}
+
+/** Blocks login for the tenant's users (requireAppContext checks
+ * tenant.status) and drops it from every tenant-facing picker
+ * (getTenants() only returns status='active') without deleting any
+ * underlying data — the audit trail stays intact. */
+export async function archiveTenant(tenantId: string): Promise<void> {
+  const db = getDb();
+  await db.update(schema.tenants).set({ status: "archived" }).where(eq(schema.tenants.id, tenantId));
+}
+
+/** Requests queue: every tenant that came through the request path
+ * (requestedBy set — as opposed to a Platform-Admin direct-create), across
+ * all statuses, so both "currently pending" and "past outcome" show up.
+ * Pass requestedByUserId to scope to one advisor's own requests. */
+export async function getTenantRequests(opts: { requestedByUserId?: string } = {}): Promise<Tenant[]> {
+  const db = getDb();
+  const conditions = [isNotNull(schema.tenants.requestedBy)];
+  if (opts.requestedByUserId) conditions.push(eq(schema.tenants.requestedBy, opts.requestedByUserId));
+  const rows = await db
+    .select()
+    .from(schema.tenants)
+    .where(and(...conditions))
+    .orderBy(desc(schema.tenants.createdAt));
+  return rows.map(mapTenant);
+}
+
+function mapInvite(r: typeof schema.tenantInvites.$inferSelect): TenantInvite {
+  return {
+    id: r.id,
+    token: r.token,
+    tenantId: r.tenantId,
+    email: r.email,
+    role: r.role as RoleName,
+    status: r.status as TenantInviteStatus,
+    expiresAt: r.expiresAt.toISOString(),
+    createdAt: r.createdAt.toISOString(),
+    acceptedAt: r.acceptedAt?.toISOString() ?? null,
+  };
+}
+
+const INVITE_EXPIRY_DAYS = 7;
+
+export async function createTenantInvite(tenantId: string, email: string, role: RoleName): Promise<string> {
+  const db = getDb();
+  const token = randomBytes(24).toString("base64url");
+  const expiresAt = new Date(Date.now() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+  await db.insert(schema.tenantInvites).values({ tenantId, token, email, role, status: "pending", expiresAt });
+  return token;
+}
+
+export async function getInviteByToken(token: string): Promise<TenantInvite | undefined> {
+  const db = getDb();
+  const rows = await db.select().from(schema.tenantInvites).where(eq(schema.tenantInvites.token, token));
+  return rows[0] ? mapInvite(rows[0]) : undefined;
+}
+
+export async function getTenantInvites(tenantId: string): Promise<TenantInvite[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(schema.tenantInvites)
+    .where(eq(schema.tenantInvites.tenantId, tenantId))
+    .orderBy(desc(schema.tenantInvites.createdAt));
+  return rows.map(mapInvite);
+}
+
+/** Single-use: returns null (and flips status to "expired") for anything
+ * not currently pending or past its expiry — the caller treats null as
+ * "invalid/expired invite". On success, creates the real membership row
+ * granting the invited role, matching how the accept-invite page hands
+ * off credential creation to Better Auth and this function to the
+ * app-domain bookkeeping. */
+export async function acceptTenantInvite(token: string, userId: string): Promise<{ tenantId: string; role: RoleName } | null> {
+  const db = getDb();
+  const rows = await db.select().from(schema.tenantInvites).where(eq(schema.tenantInvites.token, token));
+  const invite = rows[0];
+  if (!invite || invite.status !== "pending") return null;
+  if (invite.expiresAt < new Date()) {
+    await db.update(schema.tenantInvites).set({ status: "expired" }).where(eq(schema.tenantInvites.token, token));
+    return null;
+  }
+  await db
+    .update(schema.tenantInvites)
+    .set({ status: "accepted", acceptedAt: new Date() })
+    .where(eq(schema.tenantInvites.token, token));
+  await db.insert(schema.memberships).values({
+    userId,
+    tenantId: invite.tenantId,
+    role: invite.role,
+    advisorMode: false,
+  });
+  return { tenantId: invite.tenantId, role: invite.role as RoleName };
+}
+
+export async function revokeTenantInvite(inviteId: number): Promise<void> {
+  const db = getDb();
+  await db.update(schema.tenantInvites).set({ status: "expired" }).where(eq(schema.tenantInvites.id, inviteId));
+}
+
+/** Assigns an existing advisor to a specific tenant — upserts the
+ * memberships row rather than adding a new concept; this is exactly what
+ * memberships already models (which real user has which role/advisorMode
+ * at which tenant). */
+export async function reassignAdvisor(tenantId: string, advisorUserId: string): Promise<void> {
+  const db = getDb();
+  const existing = await db
+    .select()
+    .from(schema.memberships)
+    .where(and(eq(schema.memberships.userId, advisorUserId), eq(schema.memberships.tenantId, tenantId)));
+  if (existing.length) {
+    await db
+      .update(schema.memberships)
+      .set({ advisorMode: true })
+      .where(and(eq(schema.memberships.userId, advisorUserId), eq(schema.memberships.tenantId, tenantId)));
+  } else {
+    await db.insert(schema.memberships).values({ userId: advisorUserId, tenantId, role: "Advisor", advisorMode: true });
+  }
 }
 
 export async function getBucket(tenantId: string): Promise<TenantBucket> {

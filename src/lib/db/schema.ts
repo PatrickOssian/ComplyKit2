@@ -42,6 +42,11 @@ export const tenants = pgTable("tenants", {
    * "standards in scope" concept exists elsewhere in the app yet). */
   standardsInScope: jsonb("standards_in_scope").notNull().default([]),
   requestNotes: text("request_notes"),
+  /** Proposed first-admin email, collected optionally at request time and
+   * editable by Platform Admin at approval — approval is blocked until
+   * this is set. Only used to pre-fill the TenantInvite created on
+   * approval; not itself an invite. */
+  requestedAdminEmail: text("requested_admin_email"),
 });
 
 export const tenantSettings = pgTable("tenant_settings", {

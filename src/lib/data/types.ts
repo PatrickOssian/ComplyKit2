@@ -213,6 +213,7 @@ export interface Tenant {
   /** Informational only — see the v2.1 addendum's data-model note. */
   standardsInScope: string[];
   requestNotes: string | null;
+  requestedAdminEmail: string | null;
 }
 
 /** The handful of fields static/seed tenant definitions actually provide —
