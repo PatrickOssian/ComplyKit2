@@ -24,35 +24,59 @@ import {
 import type { TenantApprovalEdits, TenantRequestInput } from "./data/store";
 import type { RoleName } from "./data/types";
 
+export type SubmitTenantRequestResult =
+  | { ok: true; mode: "direct"; tenantId: string }
+  | { ok: true; mode: "request"; tenantId: string }
+  | { ok: false; error: string };
+
 /** Reachable by both an Advisor and a Platform Admin — the resulting
  * status is decided here from the server-verified isPlatformAdmin flag on
  * the authenticated session, never from any client-supplied input, which
  * is what makes "an advisor can't approve their own request" structural
- * rather than a UI convention. */
-export async function submitTenantRequestAction(input: TenantRequestInput): Promise<void> {
+ * rather than a UI convention.
+ *
+ * Returns a result object instead of calling redirect() itself: the caller
+ * is a client component that needs to show an inline validation error, and
+ * wrapping a redirect-throwing action in a client-side try/catch is a
+ * documented Next.js footgun (the catch can swallow the redirect signal
+ * too). The client does its own router.push() on success instead. */
+export async function submitTenantRequestAction(input: TenantRequestInput): Promise<SubmitTenantRequestResult> {
   const platformUser = await requirePlatformUser();
 
   if (platformUser.isPlatformAdmin) {
     if (!input.requestedAdminEmail) {
-      throw new Error("En admin-email er nødvendig for at oprette et workspace direkte.");
+      return { ok: false, error: "En admin-email er nødvendig for at oprette et workspace direkte." };
     }
     const { tenantId } = await createTenantDirect(input, platformUser.id);
-    redirect(`/platform/tenants/${tenantId}`);
+    return { ok: true, mode: "direct", tenantId };
   }
 
   const tenantId = await createTenantRequest(input, platformUser.id);
-  redirect(`/platform/requests?created=${tenantId}`);
+  return { ok: true, mode: "request", tenantId };
 }
 
-export async function approveTenantRequestAction(tenantId: string, edits: TenantApprovalEdits): Promise<void> {
+/** Bound to tenantId via `.bind(null, tenantId)` on the approval `<form>`,
+ * so the remaining argument Next.js supplies at submit time is the form's
+ * FormData — parsed here into the structured edits store.ts expects. */
+export async function approveTenantRequestAction(tenantId: string, formData: FormData): Promise<void> {
   const platformAdmin = await requirePlatformAdmin();
+  const edits: TenantApprovalEdits = {
+    name: formData.get("name")?.toString() || undefined,
+    sector: formData.get("sector")?.toString() || undefined,
+    gxp: formData.get("gxp") === "on",
+    standardsInScope: formData.getAll("standardsInScope").map(String),
+    requestNotes: formData.get("requestNotes")?.toString() || null,
+    requestedAdminEmail: formData.get("requestedAdminEmail")?.toString() || undefined,
+    targetDateDkString: formData.get("targetDateDkString")?.toString() || null,
+  };
   await approveTenantRequest(tenantId, edits, platformAdmin.id);
   redirect(`/platform/tenants/${tenantId}`);
 }
 
-export async function rejectTenantRequestAction(tenantId: string, reason: string): Promise<void> {
+export async function rejectTenantRequestAction(tenantId: string, formData: FormData): Promise<void> {
   const platformAdmin = await requirePlatformAdmin();
-  await rejectTenantRequest(tenantId, reason.trim() || "No reason given", platformAdmin.id);
+  const reason = formData.get("reason")?.toString().trim() || "No reason given";
+  await rejectTenantRequest(tenantId, reason, platformAdmin.id);
   redirect("/platform/requests");
 }
 
@@ -65,7 +89,7 @@ export async function archiveTenantAction(tenantId: string): Promise<void> {
  * email (there's no email delivery yet — see the v2.1 addendum's decision
  * #4) — so any still-pending invite for the same tenant+email is revoked
  * first to avoid two simultaneously valid links for the same person. */
-export async function resendInviteAction(tenantId: string, email: string, role: RoleName): Promise<string> {
+export async function resendInviteAction(tenantId: string, email: string, role: RoleName): Promise<void> {
   await requirePlatformAdmin();
   const existing = await getTenantInvites(tenantId);
   for (const invite of existing) {
@@ -73,7 +97,7 @@ export async function resendInviteAction(tenantId: string, email: string, role: 
       await revokeTenantInvite(invite.id);
     }
   }
-  return createTenantInvite(tenantId, email, role);
+  await createTenantInvite(tenantId, email, role);
 }
 
 export async function revokeInviteAction(inviteId: number): Promise<void> {

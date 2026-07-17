@@ -577,6 +577,41 @@ export async function reassignAdvisor(tenantId: string, advisorUserId: string): 
   }
 }
 
+export async function getTenantEstDate(tenantId: string): Promise<string | null> {
+  const db = getDb();
+  const rows = await db
+    .select({ estDateOverride: schema.tenantSettings.estDateOverride })
+    .from(schema.tenantSettings)
+    .where(eq(schema.tenantSettings.tenantId, tenantId));
+  return rows[0]?.estDateOverride ?? null;
+}
+
+export interface TenantAdvisor {
+  userId: string;
+  name: string;
+  email: string;
+}
+
+export async function getTenantAdvisors(tenantId: string): Promise<TenantAdvisor[]> {
+  const db = getDb();
+  return db
+    .select({ userId: schema.memberships.userId, name: schema.user.name, email: schema.user.email })
+    .from(schema.memberships)
+    .innerJoin(schema.user, eq(schema.user.id, schema.memberships.userId))
+    .where(and(eq(schema.memberships.tenantId, tenantId), eq(schema.memberships.advisorMode, true)));
+}
+
+/** All users flagged as a global advisor — for the "assign advisor"
+ * dropdown on the tenant detail page. */
+export async function getAllAdvisors(): Promise<TenantAdvisor[]> {
+  const db = getDb();
+  return db
+    .select({ userId: schema.user.id, name: schema.user.name, email: schema.user.email })
+    .from(schema.platformAccess)
+    .innerJoin(schema.user, eq(schema.user.id, schema.platformAccess.userId))
+    .where(eq(schema.platformAccess.isAdvisor, true));
+}
+
 export async function getBucket(tenantId: string): Promise<TenantBucket> {
   const db = getDb();
   const [settingsRows, activityRows, documentRows, policyRows, policyStateRows, recurringRows, memberRows, invoiceRows, auditRows, pendingRows, signedRows] =
