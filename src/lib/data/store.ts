@@ -27,6 +27,7 @@ import type {
   RoleName,
   SignedRecord,
   Tenant,
+  TenantStatus,
 } from "./types";
 import { auditStamp, bumpVersion, formatDkDate, formatDkDateTime, nextDueFromCadence, rndHash } from "../domain";
 
@@ -213,7 +214,27 @@ function mapPolicyState(r: typeof schema.policyState.$inferSelect): PolicyState 
 // ---- reads ----
 
 function mapTenant(r: typeof schema.tenants.$inferSelect): Tenant {
-  return { ...r, role: r.role as RoleName };
+  return {
+    id: r.id,
+    name: r.name,
+    short: r.short,
+    sector: r.sector,
+    role: r.role as RoleName,
+    plan: r.plan,
+    users: r.users,
+    gxp: r.gxp,
+    tint: r.tint,
+    status: r.status as TenantStatus,
+    requestedBy: r.requestedBy,
+    approvedBy: r.approvedBy,
+    rejectedBy: r.rejectedBy,
+    createdAt: r.createdAt.toISOString(),
+    approvedAt: r.approvedAt?.toISOString() ?? null,
+    rejectedAt: r.rejectedAt?.toISOString() ?? null,
+    rejectionReason: r.rejectionReason,
+    standardsInScope: (r.standardsInScope as string[]) ?? [],
+    requestNotes: r.requestNotes,
+  };
 }
 
 export async function getTenants(): Promise<Tenant[]> {

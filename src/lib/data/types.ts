@@ -190,6 +190,8 @@ export interface PolicyMeta {
 // ---- Tenant / member / billing / audit (not in the seed .js files — ported
 // from the initial `state` object embedded in ComplyKit.dc.html) ----
 
+export type TenantStatus = "pending_approval" | "active" | "archived" | "rejected";
+
 export interface Tenant {
   id: string;
   name: string;
@@ -200,6 +202,41 @@ export interface Tenant {
   users: number;
   gxp: boolean;
   tint: string;
+  status: TenantStatus;
+  requestedBy: string | null;
+  approvedBy: string | null;
+  rejectedBy: string | null;
+  createdAt: string;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  /** Informational only — see the v2.1 addendum's data-model note. */
+  standardsInScope: string[];
+  requestNotes: string | null;
+}
+
+/** The handful of fields static/seed tenant definitions actually provide —
+ * the rest (status, timestamps, requestedBy, ...) only exist once a row is
+ * actually inserted, with DB-side defaults filling them in. */
+export type SeedTenantInput = Pick<Tenant, "id" | "name" | "short" | "sector" | "role" | "plan" | "users" | "gxp" | "tint">;
+
+export interface PlatformAccess {
+  isPlatformAdmin: boolean;
+  isAdvisor: boolean;
+}
+
+export type TenantInviteStatus = "pending" | "accepted" | "expired";
+
+export interface TenantInvite {
+  id: number;
+  token: string;
+  tenantId: string;
+  email: string;
+  role: RoleName;
+  status: TenantInviteStatus;
+  expiresAt: string;
+  createdAt: string;
+  acceptedAt: string | null;
 }
 
 export interface Member {

@@ -18,8 +18,8 @@ import type {
   Member,
   NavDef,
   PendingSignature,
+  SeedTenantInput,
   SignedRecord,
-  Tenant,
 } from "./types";
 
 export {
@@ -39,7 +39,7 @@ export {
   templates as recurringTemplates,
 } from "./raw/recurring-templates";
 
-export const tenants: Tenant[] = [
+export const tenants: SeedTenantInput[] = [
   {
     id: "np",
     name: "Nordic Pharma Logistics A/S",

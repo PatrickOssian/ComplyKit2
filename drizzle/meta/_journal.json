@@ -15,6 +15,13 @@
       "when": 1784281179857,
       "tag": "0001_silky_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784290882819,
+      "tag": "0002_pretty_siren",
+      "breakpoints": true
     }
   ]
 }

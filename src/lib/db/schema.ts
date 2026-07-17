@@ -13,7 +13,7 @@
 // generate` and merged in, so their shape matches what Better Auth expects
 // exactly rather than being hand-guessed.
 
-import { boolean, integer, jsonb, pgTable, primaryKey, text, unique } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, primaryKey, text, timestamp, unique } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 
 export * from "./auth-schema";
@@ -28,6 +28,20 @@ export const tenants = pgTable("tenants", {
   users: integer("users").notNull().default(0),
   gxp: boolean("gxp").notNull().default(false),
   tint: text("tint").notNull(),
+  /** pending_approval | active | archived | rejected — see v2.1 addendum. */
+  status: text("status").notNull().default("active"),
+  requestedBy: text("requested_by").references(() => user.id, { onDelete: "set null" }),
+  approvedBy: text("approved_by").references(() => user.id, { onDelete: "set null" }),
+  rejectedBy: text("rejected_by").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  approvedAt: timestamp("approved_at"),
+  rejectedAt: timestamp("rejected_at"),
+  rejectionReason: text("rejection_reason"),
+  /** Informational only at this stage — captured at request time, shown on
+   * the request/detail view, not wired into any filtering (no per-tenant
+   * "standards in scope" concept exists elsewhere in the app yet). */
+  standardsInScope: jsonb("standards_in_scope").notNull().default([]),
+  requestNotes: text("request_notes"),
 });
 
 export const tenantSettings = pgTable("tenant_settings", {
@@ -242,3 +256,34 @@ export const memberships = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.tenantId] })],
 );
+
+// ---- v2.1: tenant provisioning & platform admin ----
+
+// Global, tenant-independent identity flags — deliberately separate from
+// Better Auth's own `user` table (that file is CLI-generated/owned, not
+// meant for hand edits) and from the per-tenant `memberships` table (an
+// advisor needs to be identifiable as "an advisor" before any tenant they'd
+// be a member of even exists, e.g. while submitting a brand-new tenant
+// request — memberships can't express that, there's nothing to attach to).
+export const platformAccess = pgTable("platform_access", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  isPlatformAdmin: boolean("is_platform_admin").notNull().default(false),
+  isAdvisor: boolean("is_advisor").notNull().default(false),
+});
+
+export const tenantInvites = pgTable("tenant_invites", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  token: text("token").notNull().unique(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  role: text("role").notNull().default("Admin"),
+  /** pending | accepted | expired */
+  status: text("status").notNull().default("pending"),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  acceptedAt: timestamp("accepted_at"),
+});
