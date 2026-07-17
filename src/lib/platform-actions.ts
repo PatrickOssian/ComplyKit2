@@ -110,18 +110,26 @@ export async function reassignAdvisorAction(tenantId: string, advisorUserId: str
   await reassignAdvisor(tenantId, advisorUserId);
 }
 
+export type AcceptInviteResult = { ok: true } | { ok: false; error: string };
+
 /** Paired with /accept-invite/[token]'s client-side authClient.signUp.email()
  * call, the same split already used by the sign-in flow: Better Auth owns
  * credential creation, this does the app-domain bookkeeping (membership
  * row, mark the invite accepted, set the workspace cookie) once the real
- * account already exists. */
-export async function acceptInviteBookkeepingAction(token: string): Promise<void> {
+ * account already exists.
+ *
+ * Returns a result object rather than throwing + redirecting itself, same
+ * reasoning as submitTenantRequestAction above: the caller is a client
+ * component that needs to display the "invalid/expired" error inline, and
+ * a client-side try/catch around a redirect-throwing action risks
+ * swallowing the redirect signal along with the error. */
+export async function acceptInviteBookkeepingAction(token: string): Promise<AcceptInviteResult> {
   const authUser = await getAuthUser();
   if (!authUser) redirect("/signin");
   const result = await acceptTenantInvite(token, authUser.id);
   if (!result) {
-    throw new Error("Denne invitation er ugyldig eller allerede brugt.");
+    return { ok: false, error: "Denne invitation er ugyldig eller allerede brugt." };
   }
   await setWorkspace({ tenantId: result.tenantId, advisorMode: false, gxp: true });
-  redirect("/dashboard");
+  return { ok: true };
 }
